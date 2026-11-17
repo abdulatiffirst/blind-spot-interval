@@ -1,0 +1,50 @@
+import { z } from "zod";
+import { DateTime } from "luxon";
+export const rating = z.number().int().min(1).max(5);
+export const topicInput = z.object({
+  title: z.string().trim().min(1).max(200),
+  initialKnowledge: rating.nullable().default(null),
+  importance: rating.nullable().default(null),
+  duration: z.number().int().min(5).max(180).default(15),
+  tags: z.array(z.string().trim().min(1).max(40)).max(20).default([]),
+  materials: z.array(z.string().max(2000)).max(100).default([]),
+  scheduledAt: z.iso
+    .datetime({ offset: true })
+    .refine((v) => Date.parse(v) > Date.now(), "Choose a future time")
+    .optional(),
+});
+export const preferencesInput = z
+  .object({
+    timezone: z
+      .string()
+      .refine((v) => DateTime.now().setZone(v).isValid, "Invalid timezone"),
+    studyStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+    studyEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+    duration: z.number().int().min(5).max(180),
+    daysBefore: z.number().int().min(0).max(7),
+    daysAfter: z.number().int().min(0).max(14),
+    retention: z.array(z.number().min(0.8).max(0.97)).length(5),
+    onboarded: z.boolean().default(true),
+  })
+  .refine((v) => v.studyStart < v.studyEnd, "Study end must follow start");
+export type Preferences = z.infer<typeof preferencesInput>;
+export type TopicInput = z.infer<typeof topicInput>;
+export const defaults: Preferences = {
+  timezone: "UTC",
+  studyStart: "09:00",
+  studyEnd: "21:00",
+  duration: 15,
+  daysBefore: 1,
+  daysAfter: 2,
+  retention: [0.85, 0.88, 0.9, 0.93, 0.95],
+  onboarded: false,
+};
+export const mappedRating = (n: number) => (n <= 2 ? 1 : n - 1);
+export function safeUrl(text: string) {
+  try {
+    const u = new URL(text);
+    return ["https:", "http:"].includes(u.protocol) ? u.href : null;
+  } catch {
+    return null;
+  }
+}
