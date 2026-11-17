@@ -1,3 +1,5 @@
+> Historical PostgreSQL implementation documentation. The active Firebase migration is documented in [FIREBASE_SETUP.md](FIREBASE_SETUP.md) and [FIREBASE_ARCHITECTURE.md](FIREBASE_ARCHITECTURE.md).
+
 # Verification
 
 Commands run against the real development PostgreSQL 17 database. Tests use unique per-run users and remove their own fixtures. Never point tests at production. Vitest files run sequentially with isolated module workers. Browser tests create server-side test sessions directly in the database; they do not introduce a production login endpoint.

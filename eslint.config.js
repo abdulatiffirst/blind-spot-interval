@@ -4,10 +4,15 @@ export default tseslint.config(
   {
     ignores: [
       "**/dist/**",
+      "functions/lib/**",
       "node_modules/**",
       "test-results/**",
       "playwright-report/**",
     ],
+  },
+  {
+    files: ["**/*.cjs"],
+    languageOptions: { globals: { module: "readonly", require: "readonly" } },
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -21,5 +26,10 @@ export default tseslint.config(
       ],
     },
   },
-  { files: ["**/*.js"], languageOptions: { globals: { process: "readonly" } } },
+  {
+    files: ["**/*.js", "**/*.mjs"],
+    languageOptions: {
+      globals: { process: "readonly", console: "readonly", URL: "readonly" },
+    },
+  },
 );

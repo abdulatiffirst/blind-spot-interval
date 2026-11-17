@@ -1,3 +1,5 @@
+> Historical PostgreSQL implementation documentation. The active Firebase migration is documented in [FIREBASE_SETUP.md](FIREBASE_SETUP.md) and [FIREBASE_ARCHITECTURE.md](FIREBASE_ARCHITECTURE.md).
+
 # Database
 
 Versioned SQL under `packages/database/migrations` is the migration source of truth. `npm run db:migrate` takes a migration advisory lock and applies unapplied files transactionally. The Drizzle schema was introspected from the applied PostgreSQL schema; update it when migrations change. Never run schema push against production.

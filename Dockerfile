@@ -1,4 +1,5 @@
 FROM node:24-bookworm-slim AS build
+ENV VITE_BACKEND=legacy
 WORKDIR /app
 COPY package*.json .npmrc ./
 COPY apps/web/package.json apps/web/package.json
@@ -8,6 +9,7 @@ COPY packages/database/package.json packages/database/package.json
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/memory-engine/package.json packages/memory-engine/package.json
 COPY packages/calendar-scheduler/package.json packages/calendar-scheduler/package.json
+COPY functions/package.json functions/package.json
 RUN npm ci
 COPY . .
 RUN npm run build

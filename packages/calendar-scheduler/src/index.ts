@@ -13,6 +13,31 @@ export function schedule(input: {
   risk?: number;
 }) {
   const { ideal, now, duration, preferences: p, busy } = input;
+  if (!Number.isInteger(duration) || duration < 5 || duration > 180)
+    throw new Error("Duration must be 5–180 whole minutes");
+  if (
+    !Number.isFinite(ideal.getTime()) ||
+    !Number.isFinite(now.getTime()) ||
+    !DateTime.now().setZone(p.timezone).isValid
+  )
+    throw new Error("Invalid scheduling date or timezone");
+  if (
+    !/^([01]\d|2[0-3]):[0-5]\d$/.test(p.studyStart) ||
+    !/^([01]\d|2[0-3]):[0-5]\d$/.test(p.studyEnd) ||
+    p.studyStart >= p.studyEnd
+  )
+    throw new Error("Invalid study hours");
+  if (
+    !Number.isInteger(p.daysBefore) ||
+    !Number.isInteger(p.daysAfter) ||
+    p.daysBefore < 0 ||
+    p.daysBefore > 7 ||
+    p.daysAfter < 0 ||
+    p.daysAfter > 14
+  )
+    throw new Error("Invalid scheduling window");
+  if (input.manual && !Number.isFinite(input.manual.getTime()))
+    throw new Error("Invalid manual date");
   if (input.manual) {
     const chosen = DateTime.fromJSDate(input.manual, { zone: p.timezone });
     const start = chosen.toMillis(),
@@ -70,14 +95,18 @@ export function schedule(input: {
         score:
           Math.abs(delta) * 10000 +
           Math.max(0, delta) * urgency * 100 +
-          slot.hour * 60 +
-          slot.minute,
+          (delta === 0
+            ? Math.abs(a - Math.ceil(ideal.getTime() / 300000) * 300000) / 60000
+            : slot.hour * 60 + slot.minute),
         outside,
       });
     }
   }
   candidates.sort(
-    (a, b) => a.score - b.score || a.start.localeCompare(b.start),
+    (a, b) =>
+      Number(a.outside) - Number(b.outside) ||
+      a.score - b.score ||
+      a.start.localeCompare(b.start),
   );
   const best = candidates[0];
   return best

@@ -6,3 +6,8 @@ node_modules
 test-results
 playwright-report
 coverage
+
+**/.secret.local
+**/.env
+**/.env.*.local
+.firebase

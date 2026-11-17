@@ -1,3 +1,5 @@
+> Historical PostgreSQL implementation documentation. The active Firebase migration is documented in [FIREBASE_SETUP.md](FIREBASE_SETUP.md) and [FIREBASE_ARCHITECTURE.md](FIREBASE_ARCHITECTURE.md).
+
 # Implementation report — 17 November 2026
 
 ## Outcome

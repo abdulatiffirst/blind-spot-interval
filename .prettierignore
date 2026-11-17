@@ -3,3 +3,8 @@ node_modules
 package-lock.json
 playwright-report
 test-results
+
+functions/lib
+.firebase
+.firebase.headless.json
+*-debug.log

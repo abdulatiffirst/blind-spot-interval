@@ -1,3 +1,5 @@
+> Historical PostgreSQL implementation documentation. The active Firebase migration is documented in [FIREBASE_SETUP.md](FIREBASE_SETUP.md) and [FIREBASE_ARCHITECTURE.md](FIREBASE_ARCHITECTURE.md).
+
 # Local configuration and deployment
 
 ## Google OAuth setup

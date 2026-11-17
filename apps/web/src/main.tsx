@@ -1,3 +1,5 @@
+import { usesFirebase, observeAuth, login } from "./firebase";
+import { connectCalendar } from "./api";
 import "@fontsource/inter/400.css";
 import "@fontsource/inter/500.css";
 import "@fontsource/inter/600.css";
@@ -81,19 +83,23 @@ function App() {
   }, [archived, sort]);
   useEffect(() => {
     let cancelled = false;
-    api("/me")
-      .then(async (me) => {
-        if (cancelled) return;
-        setCsrf(me.csrf);
-        setUser(me.user);
-        await refresh();
-      })
-      .catch((e) => {
-        if (e.status !== 401) setError(e.message);
-      })
-      .finally(() => setLoading(false));
+    const unsubscribe = observeAuth(() => {
+      api("/me")
+        .then(async (me) => {
+          if (cancelled) return;
+          setCsrf(me.csrf);
+          setUser(me.user);
+          await refresh();
+        })
+        .catch((e) => {
+          if (e.status !== 401) setError(e.message);
+          else setUser(null);
+        })
+        .finally(() => setLoading(false));
+    });
     return () => {
       cancelled = true;
+      unsubscribe();
     };
   }, [refresh]);
   useEffect(() => {
@@ -113,7 +119,7 @@ function App() {
     setError("");
     try {
       const result = await fn();
-      await refresh();
+      if (!result?.signedOut) await refresh();
       setNotice(typeof result === "string" ? result : message);
     } catch (e: any) {
       setError(e.message);
@@ -178,7 +184,16 @@ function App() {
               A little review, at just the right time. Give your knowledge a
               place to grow with a schedule that adapts to you.
             </p>
-            <a className="button primary" href="/api/v1/auth/google/start">
+            <a
+              className="button primary"
+              href="/api/v1/auth/google/start"
+              onClick={(e) => {
+                if (usesFirebase) {
+                  e.preventDefault();
+                  login().catch((e) => setError(e.message));
+                }
+              }}
+            >
               Continue with Google <ArrowUpRight size={18} />
             </a>
             <p className="fine-print">
@@ -253,6 +268,7 @@ function App() {
                   action(async () => {
                     await api("/auth/logout", "POST");
                     setUser(null);
+                    return { signedOut: true };
                   }, "Signed out")
                 }
               >
@@ -322,6 +338,7 @@ function App() {
             )}
             {section === "Calendar" && (
               <CalendarView
+                onError={setError}
                 prefs={prefs}
                 calendar={calendar}
                 setEditor={setEditor}
@@ -386,7 +403,14 @@ function App() {
                         </Button>
                       </>
                     ) : (
-                      <a className="button" href="/api/v1/calendar/connect">
+                      <a
+                        className="button"
+                        href="/api/v1/calendar/connect"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          connectCalendar().catch((e) => setError(e.message));
+                        }}
+                      >
                         Connect Google Calendar <ArrowUpRight size={16} />
                       </a>
                     )}
@@ -402,6 +426,7 @@ function App() {
                       action(async () => {
                         await api("/auth/logout", "POST");
                         setUser(null);
+                        return { signedOut: true };
                       }, "Signed out")
                     }
                   >

@@ -1,32 +1,38 @@
-/**
- * Import function triggers from their respective submodules:
- *
- * import {onCall} from "firebase-functions/v2/https";
- * import {onDocumentWritten} from "firebase-functions/v2/firestore";
- *
- * See a full list of supported triggers at https://firebase.google.com/docs/functions
- */
-
-import {setGlobalOptions} from "firebase-functions";
-// import {onRequest} from "firebase-functions/https";
-// import * as logger from "firebase-functions/logger";
-
-// Start writing functions
-// https://firebase.google.com/docs/functions/typescript
-
-// For cost control, you can set the maximum number of containers that can be
-// running at the same time. This helps mitigate the impact of unexpected
-// traffic spikes by instead downgrading performance. This limit is a
-// per-function limit. You can override the limit for each function using the
-// `maxInstances` option in the function's options, e.g.
-// `onRequest({ maxInstances: 5 }, (req, res) => { ... })`.
-// NOTE: setGlobalOptions does not apply to functions using the v1 API. V1
-// functions should each use functions.runWith({ maxInstances: 10 }) instead.
-// In the v1 API, each function can only serve one request per container, so
-// this will be the maximum concurrent request count.
-setGlobalOptions({maxInstances: 10});
-
-// export const helloWorld = onRequest((request, response) => {
-//   logger.info("Hello logs!", {structuredData: true});
-//   response.send("Hello from Firebase!");
-// });
+import { setGlobalOptions } from "firebase-functions/v2";
+import { onRequest } from "firebase-functions/v2/https";
+import { onDocumentCreated } from "firebase-functions/v2/firestore";
+import { onSchedule } from "firebase-functions/v2/scheduler";
+import { createApp } from "./http.ts";
+import { processJob, reconcile } from "./jobs.ts";
+import { emulator } from "./calendar.ts";
+setGlobalOptions({ region: "europe-west1", maxInstances: 10 });
+const secrets = emulator()
+  ? []
+  : ["GOOGLE_CLIENT_SECRET", "TOKEN_ENCRYPTION_KEY"];
+export const api = onRequest(
+  { timeoutSeconds: 120, memory: "512MiB", secrets },
+  createApp(),
+);
+export const syncJob = onDocumentCreated(
+  {
+    document: "syncJobs/{jobId}",
+    retry: true,
+    timeoutSeconds: 540,
+    memory: "512MiB",
+    secrets,
+  },
+  async (event) => {
+    await processJob(event.params.jobId);
+  },
+);
+export const reconcileCalendar = onSchedule(
+  {
+    schedule: "every 5 minutes",
+    timeoutSeconds: 540,
+    memory: "512MiB",
+    secrets,
+  },
+  async () => {
+    await reconcile();
+  },
+);

@@ -25,9 +25,9 @@ jobs:
       - run: npm run db:migrate
       - run: npm run lint
       - run: npm run build
-      - run: npm test
+      - run: npm run test:legacy
       - run: npx playwright install --with-deps chromium
-      - run: npm run test:e2e
+      - run: npm run test:e2e:legacy
       - uses: actions/upload-artifact@v4
         if: failure()
         with: { name: browser-results, path: test-results/ }

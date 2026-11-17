@@ -30,3 +30,13 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+.firebase/
+*-debug.log
+functions/lib/
+functions/.secret.local
+functions/.env*
+.emulator-data/
+!.env.firebase.example
+!functions/.env.example
+backups/
+.firebase.headless.json

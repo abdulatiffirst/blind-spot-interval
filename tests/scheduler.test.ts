@@ -67,7 +67,9 @@ describe("Availability scheduling", () => {
         now: new Date("2026-03-07T15:00:00Z"),
         preferences: { ...defaults, timezone: zone },
       });
-      expect(DateTime.fromISO(r.start!, { zone }).hour).toBe(9);
+      expect(DateTime.fromISO(r.start!, { zone }).toMillis()).toBe(
+        Date.parse("2026-03-08T15:00:00Z"),
+      );
     },
   );
   it("handles spring-forward study hours deterministically", () => {

@@ -1,61 +1,73 @@
 # Blind Spot Interval
 
-Make room for what you know. A TypeScript spaced-repetition app with a real PostgreSQL API, FSRS-7, internal availability scheduling, and optional Google Calendar synchronization.
+Make room for what you know. An adaptive knowledge-review app with **Firebase Authentication, Firestore, Cloud Functions v2 and Firebase Hosting**. React/Vite provides the interface; the existing FSRS-7 and availability packages remain shared and independent.
 
-## Run locally
+## Run the Firebase app locally
 
-Requires Node **24+**, npm, Docker with Compose, and a Google OAuth web client for interactive sign-in. There is deliberately no development login backdoor.
+Requires Node 24+, npm and Java 21. Install from the repository root.
 
 ```sh
 npm ci
-docker compose up -d db
-cp .env.example .env
-# Configure GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and TOKEN_ENCRYPTION_KEY in .env.
-npm run db:migrate
 npm run dev
 ```
 
-The development commands start Vite (5173), Fastify (3001), and the durable-job worker. Vite proxies `/api` so browser requests and cookies remain same-origin. See [Google setup and deployment](docs/DEPLOYMENT.md) for exact redirect URIs and required configuration. Without Google credentials the services and automated tests run, but interactive Google-only sign-in is unavailable. Internal scheduling does not require Calendar authorization.
+This runs the demo Auth (9099), Firestore (8080), Functions (5001), Emulator UI (4000), Hosting (5000), Vite (5174), and a local retry/reconciliation process. Scripts explicitly select **`demo-blind-spot-interval`**, even though the user's real project alias remains `blind-spot-interval`.
+
+In this restricted cloud, use the verified Firestore download fallback and headless mode:
 
 ```sh
-npm run test         # Real PostgreSQL plus unit tests; mocks Google transport
-npm run test:e2e     # Desktop + mobile Chromium; creates isolated test sessions in DB
+npm run emulators:prepare
+npm run dev:headless
+```
+
+The core emulators work through a checksum-verified official Google SDK distribution. The optional Emulator UI download and browser Google-popup script remain blocked by network policy here. [Setup instructions](docs/FIREBASE_SETUP.md) explain the workaround, exact commands, public Firebase web configuration and separate offline Calendar OAuth.
+
+## Validate
+
+```sh
 npm run typecheck
 npm run lint
 npm run build
+npm test                  # Portable algorithm/security tests
+npm run test:firebase     # Real demo Auth/Firestore/Functions and rules tests
+npm run test:e2e          # Real Firebase backend, desktop/mobile Chromium
 ```
 
-For browser tests, installed `/usr/bin/chromium` is used when present. Otherwise run `PLAYWRIGHT_BROWSERS_PATH=/tmp/blindspot-browsers npx playwright install chromium`. Tests must use a disposable development/test database, never production.
+Tests reject non-demo projects and wrong/missing emulator hosts before loading Admin SDK. Google Calendar transport is mocked. Browser E2E authenticates with a supported demo Google credential through Firebase Auth; it does not claim real Google consent or popup verification.
+
+## Features
+
+- Google Sign-In through Firebase Authentication, verified bearer tokens and owner-isolated Firestore data.
+- Onboarding and editable timezone, study hours, duration, scheduling window and retention mapping.
+- Today queue/progress, searchable/tagged topics, archive/restore, details/history, and a lightweight ordered materials editor.
+- Nullable initial knowledge/importance; scheduling preview; five recall ratings; exactly-once review completion and audited latest-rating correction.
+- Pinned ts-fsrs 6.0.0 / FSRS-7 with real timestamps, full card snapshots, fast stability, model version and weights.
+- Independent calendar scheduling with precise due times, configurable date windows, recovery tomorrow/nearest free day, conflicts, DST and protected manual overrides.
+- Optional separate Calendar offline consent, encrypted refresh grants, dedicated events with materials, primary free/busy, two-way moves/deletes, bounded deletion recreation, incremental sync, watches, retries and reconciliation.
+- Light/dark themes, mobile navigation, keyboard dialogs and locally served fonts.
 
 ## Structure
 
 ```text
-apps/web/                   React, Vite, Tailwind, Radix dialog primitives
-apps/api/                   Fastify REST API, Google OIDC, Calendar transport
-apps/worker/                Durable PostgreSQL jobs, reconciliation and watches
-packages/database/          SQL migrations and introspected Drizzle schema
-packages/shared/            Zod contracts, defaults and shared types
-packages/memory-engine/     ts-fsrs 6 / FSRS-7, original-rating policy
-packages/calendar-scheduler/ Availability and timezone policies
- tests/                     Vitest integration/unit and Playwright tests
- docs/                      Specification, architecture and operating instructions
+apps/web/                    React UI and Firebase Auth/bearer transport
+functions/src/               Authenticated REST API, Firestore transactions, Calendar/jobs
+packages/memory-engine/      Existing FSRS-7 implementation
+packages/calendar-scheduler/ Existing scheduler plus tested edge-case fixes
+packages/shared/             Zod contracts and shared preferences
+scripts/                     Demo runners, reconciliation and safe migration tooling
+firestore.rules              Owner reads, server-only mutations/private data
+firestore.indexes.json       Job/query indexes and expiry policies
+firebase.json                Functions, Hosting and emulator configuration
+apps/api/, apps/worker/,
+packages/database/           Preserved PostgreSQL rollback implementation
 ```
 
-## Features
+The user's initial Firebase scaffold is incorporated. The real project alias, Firestore `eur3` location and Node 24 settings are preserved; Functions use `europe-west1`. Nothing has been deployed and no production database has been changed.
 
-- Google-only OIDC sign-in, server-side opaque sessions, separate optional Calendar consent.
-- Today queue and completion progress; searchable/filterable topics; archive and restore with history intact.
-- Nullable initial knowledge/importance; custom tags; ordered text/link materials; duration and scheduling preview.
-- Five recall ratings; transactional exactly-once completion; audited correction of the latest rating.
-- FSRS-7 state, weights, version and actual timestamps persisted with each review.
-- Day/week/month internal calendar; local study hours and scheduling windows; protected manual overrides.
-- Google events, incremental inbound synchronization, deletion replacement with loop protection, primary-calendar free/busy, durable retries, polling and optional push watches.
-- Light/dark themes, mobile navigation, keyboard dialogs and self-hosted fonts.
+## Migration and deployment
 
-## Status and limits
+Read [the implementation report](docs/FIREBASE_IMPLEMENTATION_REPORT.md), [the migration audit](docs/FIREBASE_MIGRATION_PLAN.md), [architecture](docs/FIREBASE_ARCHITECTURE.md), [setup/deployment preparation](docs/FIREBASE_SETUP.md), and [implementation progress](docs/IMPLEMENTATION_PROGRESS.md). The migration tool is read-only for PostgreSQL export, dry-run by default, and only allows create-only imports into the explicit demo emulator. Production migration and deployment require separate approval.
 
-See [test evidence](docs/TESTING.md) and [decisions](docs/DECISIONS.md). Local automated verification is separate from live Google verification and deployment. Google login, refresh grants, Calendar scopes and webhooks require a real configured client and consenting test account before production acceptance. The initial implementation reads external availability from the primary Google calendar, not a multi-calendar picker. Latest-review corrections are supported; earlier-history corrections are rejected rather than silently replaying history.
+The old backend remains available through `npm run dev:legacy` and its original tests. [PostgreSQL instructions](docs/POSTGRES_README.md) are retained for rollback; Docker/production Compose files explicitly target that legacy mode.
 
-No live deployment or Google verification is implied by building the code. Do not publish this as production-ready until the live acceptance checklist in the deployment guide is complete.
-
-The separately initialized starter app from the original `main` commit is preserved in Git history and in `docs/original-starter.zip`. The workspace scripts above run the implemented MVP.
+Real Google popup login, Calendar grants/webhooks, the optional emulator UI, deployed Functions/Hosting and native Safari/Android remain separate live acceptance checks. Do not treat emulator or mocked tests as evidence of production readiness.

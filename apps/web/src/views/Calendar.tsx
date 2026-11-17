@@ -1,3 +1,4 @@
+import { connectCalendar } from "../api";
 import { ChevronLeft, ChevronRight, Link2, Plus } from "lucide-react";
 import { DateTime } from "luxon";
 import type { Preferences } from "../../../../packages/shared/src/index";
@@ -5,6 +6,7 @@ import { date } from "../date";
 import type { Review, Topic } from "../types";
 import { Button } from "../ui";
 export function CalendarView({
+  onError,
   prefs,
   calendar,
   setEditor,
@@ -16,6 +18,7 @@ export function CalendarView({
   reviews,
   setReschedule,
 }: {
+  onError: (message: string) => void;
   prefs: Preferences;
   calendar: any;
   setEditor: (topic: Topic | "new") => void;
@@ -57,7 +60,14 @@ export function CalendarView({
           </p>
         </div>
         {!calendar.connected && (
-          <a className="button" href="/api/v1/calendar/connect">
+          <a
+            className="button"
+            href="/api/v1/calendar/connect"
+            onClick={(e) => {
+              e.preventDefault();
+              connectCalendar().catch((e) => onError(e.message));
+            }}
+          >
             <Link2 size={16} /> Connect Google
           </a>
         )}

@@ -1,3 +1,5 @@
+> Historical PostgreSQL implementation documentation. The active Firebase migration is documented in [FIREBASE_SETUP.md](FIREBASE_SETUP.md) and [FIREBASE_ARCHITECTURE.md](FIREBASE_ARCHITECTURE.md).
+
 # Google Calendar synchronization
 
 Calendar consent is separate from OpenID login. Requested scopes are `calendar.app.created` for the app's secondary calendar and `calendar.events.freebusy` for availability. The initial availability implementation queries `primary`. No Calendar permission is requested during login.

@@ -21,7 +21,7 @@ export default defineConfig({
       reuseExistingServer: !process.env.CI,
     },
     {
-      command: "npm run dev:web",
+      command: "npm run dev:web:legacy",
       url: "http://localhost:5173",
       reuseExistingServer: !process.env.CI,
     },

@@ -1,14 +1,24 @@
+import { usesFirebase, authToken, logout } from "./firebase";
 let csrf = "";
 export const setCsrf = (value: string) => {
   csrf = value;
 };
 export async function api(path: string, method = "GET", body?: unknown) {
+  if (usesFirebase && path === "/auth/logout") {
+    await logout();
+    return { ok: true };
+  }
+  const token = usesFirebase ? await authToken() : null;
+  if (usesFirebase && !token)
+    throw Object.assign(new Error("Sign in to continue"), { status: 401 });
   const r = await fetch("/api/v1" + path, {
     method,
     credentials: "same-origin",
     headers: {
       ...(body === undefined ? {} : { "content-type": "application/json" }),
-      "x-csrf-token": csrf,
+      ...(usesFirebase
+        ? { authorization: `Bearer ${token}` }
+        : { "x-csrf-token": csrf }),
       ...(method === "POST" ? { "idempotency-key": crypto.randomUUID() } : {}),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -38,4 +48,13 @@ export async function loadTopics(archived: boolean, sort: string) {
     if (!page.items.length) break;
   } while (items.length < total);
   return { items, total };
+}
+
+export async function connectCalendar() {
+  if (!usesFirebase) {
+    location.assign("/api/v1/calendar/connect");
+    return;
+  }
+  const result = await api("/calendar/connect");
+  location.assign(result.url);
 }

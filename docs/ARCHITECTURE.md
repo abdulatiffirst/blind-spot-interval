@@ -1,3 +1,5 @@
+> Historical PostgreSQL implementation documentation. The active Firebase migration is documented in [FIREBASE_SETUP.md](FIREBASE_SETUP.md) and [FIREBASE_ARCHITECTURE.md](FIREBASE_ARCHITECTURE.md).
+
 # Architecture
 
 The npm workspace shares Zod contracts and TypeScript types. React fetches the versioned Fastify API through the same origin. PostgreSQL persists all user state, opaque hashed session IDs and synchronization jobs. Drizzle provides a typed schema and ORM preference reads; postgres.js tagged SQL implements transactions and explicit locks. These clients are separate because Drizzle changes its client's JSON serializers.

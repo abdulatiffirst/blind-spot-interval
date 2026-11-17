@@ -1,5 +1,6 @@
 {
   "projects": {
-    "default": "blind-spot-interval"
+    "default": "blind-spot-interval",
+    "emulator": "demo-blind-spot-interval"
   }
 }
