@@ -57,3 +57,5 @@ packages/calendar-scheduler/ Availability and timezone policies
 See [test evidence](docs/TESTING.md) and [decisions](docs/DECISIONS.md). Local automated verification is separate from live Google verification and deployment. Google login, refresh grants, Calendar scopes and webhooks require a real configured client and consenting test account before production acceptance. The initial implementation reads external availability from the primary Google calendar, not a multi-calendar picker. Latest-review corrections are supported; earlier-history corrections are rejected rather than silently replaying history.
 
 No live deployment or Google verification is implied by building the code. Do not publish this as production-ready until the live acceptance checklist in the deployment guide is complete.
+
+The separately initialized starter app from the original `main` commit is preserved in Git history and in `docs/original-starter.zip`. The workspace scripts above run the implemented MVP.
