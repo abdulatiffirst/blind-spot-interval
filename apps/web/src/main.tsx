@@ -19,8 +19,10 @@ import {
   CalendarDays,
   Layers3,
   LogOut,
+  Mail,
   Moon,
   RotateCcw,
+  Send,
   Settings2,
   Sun,
 } from "lucide-react";
@@ -297,13 +299,19 @@ function App() {
   if (loading)
     return (
       <div className="center-screen">
-        <div className="brand-mark">b.</div>
+        <img
+          className="brand-mark"
+          src="/favicon.svg"
+          width="38"
+          height="38"
+          alt=""
+        />
         <p role="status">Finding your rhythm…</p>
       </div>
     );
   if (!user)
     return (
-      <main className="landing">
+      <div className="landing">
         <header>
           <Logo />
           <Button
@@ -314,7 +322,7 @@ function App() {
             {dark ? <Sun /> : <Moon />}
           </Button>
         </header>
-        <div className="landing-grid">
+        <main className="landing-grid">
           <div>
             <p className="eyebrow">LESS FORGETTING. MORE BECOMING.</p>
             <h1>
@@ -356,17 +364,37 @@ function App() {
             <div className="orbit-center">
               make
               <br />
-              it stay<span>↗</span>
+              it stay
+              <ArrowUpRight aria-hidden="true" />
             </div>
             <span className="floating-label">
               A SMALL HABIT. A LASTING DIFFERENCE.
             </span>
           </div>
-        </div>
+        </main>
         <footer>
-          BLIND SPOT / INTERVAL <span>Built for the curious.</span>
+          <small>BLIND SPOT INTERVAL © 2026</small>
+          <address aria-label="Contact">
+            <a
+              href="https://t.me/aabdunazirov"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <Send size={15} aria-hidden="true" />
+              <span>
+                <span className="sr-only">Telegram: </span>@aabdunazirov
+              </span>
+            </a>
+            <a href="mailto:abdulatifabdunazirov@gmail.com">
+              <Mail size={15} aria-hidden="true" />
+              <span>
+                <span className="sr-only">Email: </span>
+                abdulatifabdunazirov@gmail.com
+              </span>
+            </a>
+          </address>
         </footer>
-      </main>
+      </div>
     );
   return (
     <ErrorContext.Provider value={error}>

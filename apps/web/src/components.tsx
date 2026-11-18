@@ -6,7 +6,13 @@ import { Button } from "./ui";
 export function Logo() {
   return (
     <div className="logo">
-      <span className="brand-mark">b.</span>
+      <img
+        className="brand-mark"
+        src="/favicon.svg"
+        width="38"
+        height="38"
+        alt=""
+      />
       <span>
         blind spot<small>INTERVAL</small>
       </span>
