@@ -1,0 +1,15 @@
+FROM node:24-bookworm-slim
+WORKDIR /app
+ENV NODE_ENV=production
+COPY package*.json ./
+COPY functions/package.json functions/package.json
+COPY apps/api/package.json apps/api/package.json
+COPY apps/worker/package.json apps/worker/package.json
+COPY apps/web/package.json apps/web/package.json
+COPY packages/ packages/
+RUN npm ci --ignore-scripts
+COPY functions/ functions/
+COPY scripts/server-worker.ts scripts/server-worker.ts
+# Build includes runtime TS dependencies resolved by tsx.
+USER node
+CMD ["./node_modules/.bin/tsx", "scripts/server-worker.ts"]
