@@ -1,10 +1,16 @@
-import { test, expect, type Page } from "@playwright/test";
+import {
+  test,
+  expect,
+  type Page,
+  type Request,
+  type Route,
+} from "@playwright/test";
 import { db, auth } from "../../functions/src/store.ts";
 let uid: string;
 async function signIn(page: Page) {
   await page.goto("/");
   await expect(
-    page.getByRole("link", { name: /Continue with Google/ }),
+    page.getByRole("button", { name: "Continue with Google" }),
   ).toBeVisible();
   const sub = crypto.randomUUID();
   const token =
@@ -49,6 +55,148 @@ test.afterEach(async () => {
     uid = "";
   }
 });
+test("reports failed Google popup initialization and allows a retry", async ({
+  page,
+}) => {
+  await page.route("https://apis.google.com/js/api.js?*", (route) =>
+    route.abort(),
+  );
+  let meRequests = 0;
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/v1/me") meRequests++;
+  });
+  await page.goto("/");
+  const login = page.getByRole("button", { name: "Continue with Google" });
+  const error = page.getByRole("alert");
+  await login.click();
+  await expect(error).toHaveText("Google Sign-In did not complete. Try again.");
+  await expect(login).toBeEnabled();
+  await login.click();
+  await expect(error).toHaveText("Google Sign-In did not complete. Try again.");
+  await expect(login).toBeEnabled();
+  expect(meRequests).toBe(0);
+});
+
+test("allows another sign-in attempt if the Google popup never settles", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await page.route("https://apis.google.com/js/api.js?*", (route) =>
+    route.fulfill({ contentType: "text/javascript", body: "" }),
+  );
+  await page.goto("/");
+  const login = page.getByRole("button", { name: "Continue with Google" });
+  await login.click();
+  await expect(
+    page.getByRole("button", { name: "Opening Google Sign-In…" }),
+  ).toBeDisabled();
+  await page.clock.fastForward(120_000);
+  await expect(page.getByRole("alert")).toHaveText(
+    "Google Sign-In timed out. Close the sign-in window and try again.",
+  );
+  await expect(login).toBeEnabled();
+});
+
+test("loads the workspace with a Firebase token and restores it on reload", async ({
+  page,
+}) => {
+  const meRequests: Request[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/v1/me") {
+      meRequests.push(request);
+    }
+  });
+  await signIn(page);
+  const onboarding = page.getByRole("dialog", {
+    name: "Find your learning rhythm.",
+  });
+  await expect(onboarding).toBeVisible();
+  await page.getByRole("button", { name: /Let’s begin/ }).click();
+  await expect(onboarding).not.toBeVisible();
+  await page.getByRole("button", { name: "Topics", exact: true }).click();
+  const topicsUpdated = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      url.pathname === "/api/v1/topics" &&
+      url.searchParams.get("archived") === "true"
+    );
+  });
+  await page.getByLabel("Archived", { exact: true }).check();
+  await topicsUpdated;
+  expect(meRequests).toHaveLength(1);
+  expect(
+    /^Bearer \S+$/.test(
+      (await meRequests[0].headerValue("authorization")) ?? "",
+    ),
+  ).toBe(true);
+
+  const restoredProfile = page.waitForResponse("**/api/v1/me");
+  const restoredPreferences = page.waitForResponse("**/api/v1/preferences");
+  await page.reload();
+  expect((await restoredProfile).status()).toBe(200);
+  expect((await restoredPreferences).status()).toBe(200);
+  await expect(page.getByRole("navigation")).toBeVisible();
+  await expect(onboarding).not.toBeVisible();
+  expect(meRequests).toHaveLength(2);
+});
+
+test("cancels a pending profile request when Firebase signs out", async ({
+  page,
+}) => {
+  let holdRequest!: (route: Route) => void;
+  const pending = new Promise<Route>((resolve) => {
+    holdRequest = resolve;
+  });
+  await page.route("**/api/v1/me", holdRequest, {
+    times: 1,
+  });
+  await signIn(page);
+  const route = await pending;
+  const aborted = page.waitForEvent("requestfailed", {
+    predicate: (request) => request === route.request(),
+  });
+  try {
+    await page.evaluate(async () => {
+      const appPath = "/src/firebase.ts";
+      const { logout } = await import(/* @vite-ignore */ appPath);
+      await logout();
+    });
+    await expect(
+      page.getByRole("button", { name: "Continue with Google" }),
+    ).toBeVisible();
+    await aborted;
+    await expect(page.getByRole("alert")).toHaveCount(0);
+  } finally {
+    await route.abort().catch(() => {});
+  }
+});
+
+for (const [status, message] of [
+  [401, "Your session expired. Sign in with Google again."],
+  [503, "Could not load your workspace. Try again."],
+] as const) {
+  test(`leaves the loading screen and recovers when /me returns ${status}`, async ({
+    page,
+  }) => {
+    await page.route(
+      "**/api/v1/me",
+      (route) =>
+        route.fulfill({
+          status,
+          json: { error: "Profile unavailable" },
+        }),
+      { times: 1 },
+    );
+    await signIn(page);
+    await expect(page.getByRole("alert")).toHaveText(message);
+    await expect(page.getByRole("navigation")).toHaveCount(0);
+    await page.getByRole("button", { name: "Retry loading workspace" }).click();
+    await expect(
+      page.getByRole("dialog", { name: "Find your learning rhythm." }),
+    ).toBeVisible();
+  });
+}
+
 test("Google credential → onboarding → Logarithms → FSRS review → internal calendar", async ({
   page,
 }) => {
@@ -136,7 +284,9 @@ test("edit, archive, restore, keyboard dismissal and Firebase sign-out", async (
   await expect(page.getByRole("dialog")).not.toBeVisible();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
-  await expect(
-    page.getByRole("link", { name: /Continue with Google/ }),
-  ).toBeVisible();
+  const login = page.getByRole("button", { name: "Continue with Google" });
+  await expect(login).toBeVisible();
+  await page.reload();
+  await expect(login).toBeVisible();
+  await expect(page.getByRole("navigation")).toHaveCount(0);
 });

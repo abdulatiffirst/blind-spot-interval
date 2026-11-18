@@ -1,4 +1,11 @@
-import { usesFirebase, observeAuth, login } from "./firebase";
+import {
+  firebaseAuth,
+  usesFirebase,
+  observeAuth,
+  login,
+  signInErrorMessage,
+} from "./firebase";
+import type { User } from "firebase/auth";
 import { connectCalendar } from "./api";
 import "@fontsource/inter/400.css";
 import "@fontsource/inter/500.css";
@@ -18,12 +25,9 @@ import {
   Sun,
 } from "lucide-react";
 import { DateTime } from "luxon";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import {
-  defaults,
-  type Preferences,
-} from "../../../packages/shared/src/index.ts";
+import { defaults } from "../../../packages/shared/src/index.ts";
 import { api, setCsrf, loadTopics } from "./api";
 import { Logo, Materials } from "./components";
 import { date } from "./date";
@@ -35,19 +39,35 @@ import { CalendarView } from "./views/Calendar";
 import { TodayView } from "./views/Today";
 import { TopicsView } from "./views/Topics";
 
+type Account = { id: string; display_name: string; email: string };
+const sessionTimeoutMs = 20000;
+const emptyDashboard = {
+  topics: [] as Topic[],
+  reviews: [] as Review[],
+  prefs: defaults,
+  calendar: { connected: false } as { connected: boolean; error?: string },
+  progress: 0,
+};
+
 function App() {
-  const [user, setUser] = useState<any>(null),
+  const [identity, setIdentity] = useState<User | null>(),
+    [profile, setProfile] = useState<{
+      identity: User | null | undefined;
+      user: Account;
+    } | null>(null),
+    [sessionAttempt, setSessionAttempt] = useState(0),
+    [signingIn, setSigningIn] = useState(false),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [notice, setNotice] = useState("");
+  const user = profile?.identity === identity ? profile?.user : null;
+  const lifetime = useRef<AbortSignal>(null);
+  const session = useRef<AbortSignal>(null);
   const [section, setSection] = useState(
       new URLSearchParams(location.search).get("section") ?? "Today",
     ),
-    [topics, setTopics] = useState<Topic[]>([]),
-    [reviews, setReviews] = useState<Review[]>([]),
-    [prefs, setPrefs] = useState<Preferences>(defaults),
-    [calendar, setCalendar] = useState<any>({ connected: false }),
-    [progress, setProgress] = useState(0);
+    [dashboard, setDashboard] = useState(emptyDashboard);
+  const { topics, reviews, prefs, calendar, progress } = dashboard;
   const [query, setQuery] = useState(""),
     [tag, setTag] = useState(""),
     [sort, setSort] = useState("date"),
@@ -67,76 +87,194 @@ function App() {
     document.documentElement.classList.toggle("dark", dark);
     localStorage.setItem("theme", dark ? "dark" : "light");
   }, [dark]);
-  const refresh = useCallback(async () => {
-    const [ts, rs, p, c, pr] = await Promise.all([
-      loadTopics(archived, sort),
-      api("/reviews/upcoming"),
-      api("/preferences"),
-      api("/calendar/status"),
-      api("/reviews/progress"),
-    ]);
-    setProgress(pr.completed);
-    setTopics(ts.items);
-    setReviews(rs);
-    setPrefs(p);
-    setCalendar(c);
-  }, [archived, sort]);
   useEffect(() => {
-    let cancelled = false;
-    const unsubscribe = observeAuth(() => {
-      api("/me")
-        .then(async (me) => {
-          if (cancelled) return;
-          setCsrf(me.csrf);
-          setUser(me.user);
-          await refresh();
-        })
-        .catch((e) => {
-          if (e.status !== 401) setError(e.message);
-          else setUser(null);
-        })
-        .finally(() => setLoading(false));
-    });
-    return () => {
-      cancelled = true;
-      unsubscribe();
+    const controller = new AbortController();
+    lifetime.current = controller.signal;
+    if (!usesFirebase) return () => controller.abort();
+
+    const onError = () => {
+      if (controller.signal.aborted) return;
+      clearTimeout(timeout);
+      setError("Could not restore your sign-in session. Try signing in again.");
+      setLoading(false);
     };
-  }, [refresh]);
+    const timeout = setTimeout(onError, sessionTimeoutMs);
+    let unsubscribe: (() => void) | undefined;
+    try {
+      unsubscribe = observeAuth((currentUser) => {
+        if (controller.signal.aborted) return;
+        clearTimeout(timeout);
+        setIdentity(currentUser);
+      }, onError);
+    } catch {
+      onError();
+    }
+    return () => {
+      controller.abort();
+      clearTimeout(timeout);
+      unsubscribe?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (usesFirebase && identity === undefined) return;
+    setProfile(null);
+    setDashboard(emptyDashboard);
+    setBusy(false);
+    setNotice("");
+    setEditor(null);
+    setDetail(null);
+    setReview(null);
+    setHistory([]);
+    setReschedule(null);
+    setConfirmArchive(null);
+    setCorrect(null);
+    setCsrf("");
+    if (usesFirebase && !identity) {
+      setLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const { signal } = controller;
+    session.current = signal;
+    setLoading(true);
+    setError("");
+    const timeout = setTimeout(() => {
+      controller.abort();
+      setError("Loading your workspace timed out. Try again.");
+      setLoading(false);
+    }, sessionTimeoutMs);
+    api("/me", "GET", undefined, { user: identity ?? undefined, signal })
+      .then((me) => {
+        if (signal.aborted) return;
+        if (!me.user) throw new Error("Workspace profile is missing");
+        setCsrf(me.csrf);
+        setProfile({ identity, user: me.user });
+      })
+      .catch((e) => {
+        if (signal.aborted || (!usesFirebase && e.status === 401)) return;
+        setError(
+          e.status === 401
+            ? "Your session expired. Sign in with Google again."
+            : e.status === 403
+              ? "Your account could not load the workspace. Sign in with Google again."
+              : "Could not load your workspace. Try again.",
+        );
+      })
+      .finally(() => {
+        clearTimeout(timeout);
+        if (!signal.aborted) setLoading(false);
+      });
+    return () => {
+      controller.abort();
+      clearTimeout(timeout);
+    };
+  }, [identity, sessionAttempt]);
+
+  const refresh = useCallback(
+    async (signal?: AbortSignal) => {
+      const [ts, reviews, prefs, calendar, progress] = await Promise.all([
+        loadTopics(archived, sort, signal),
+        api("/reviews/upcoming", "GET", undefined, { signal }),
+        api("/preferences", "GET", undefined, { signal }),
+        api("/calendar/status", "GET", undefined, { signal }),
+        api("/reviews/progress", "GET", undefined, { signal }),
+      ]);
+      if (signal?.aborted) return;
+      setDashboard({
+        topics: ts.items,
+        reviews,
+        prefs,
+        calendar,
+        progress: progress.completed,
+      });
+    },
+    [archived, sort],
+  );
+  useEffect(() => {
+    if (!user) return;
+    const controller = new AbortController();
+    refresh(controller.signal).catch((e) => {
+      if (!controller.signal.aborted) setError(e.message);
+    });
+    return () => controller.abort();
+  }, [user, refresh]);
   useEffect(() => {
     const id = new URLSearchParams(location.search).get("review");
     if (user && id) {
-      api("/topics/" + id)
-        .then(setReview)
-        .catch((e) => setError(e.message));
+      const controller = new AbortController();
+      const { signal } = controller;
+      api("/topics/" + id, "GET", undefined, { signal })
+        .then((topic) => {
+          if (!signal.aborted) setReview(topic);
+        })
+        .catch((e) => {
+          if (!signal.aborted) setError(e.message);
+        });
       historyReplace();
+      return () => controller.abort();
     }
   }, [user]);
   function historyReplace() {
     window.history.replaceState(null, "", location.pathname);
   }
+  async function signIn() {
+    if (signingIn) return;
+    const signal = lifetime.current;
+    setSigningIn(true);
+    setError("");
+    try {
+      const signedInUser = await login();
+      if (!signal?.aborted && firebaseAuth().currentUser === signedInUser)
+        setIdentity(signedInUser);
+    } catch (e) {
+      if (!signal?.aborted) setError(signInErrorMessage(e));
+    } finally {
+      if (!signal?.aborted) setSigningIn(false);
+    }
+  }
   async function action(fn: () => Promise<any>, message: string) {
+    const signal = session.current;
     setBusy(true);
     setError("");
     try {
       const result = await fn();
-      if (!result?.signedOut) await refresh();
-      setNotice(typeof result === "string" ? result : message);
+      if (!result?.signedOut && !signal?.aborted)
+        await refresh(signal ?? undefined);
+      if (!signal?.aborted)
+        setNotice(typeof result === "string" ? result : message);
     } catch (e: any) {
-      setError(e.message);
+      if (!signal?.aborted) setError(e.message);
     } finally {
-      setBusy(false);
+      if (!signal?.aborted) setBusy(false);
     }
   }
+  function signOut() {
+    return action(async () => {
+      await api("/auth/logout", "POST");
+      if (!usesFirebase && !lifetime.current?.aborted) setProfile(null);
+      return { signedOut: true };
+    }, "Signed out");
+  }
   async function openTopic(id: string, asReview = false) {
+    const signal = session.current ?? undefined;
     try {
-      const t = await api("/topics/" + id);
+      const t = await api("/topics/" + id, "GET", undefined, { signal });
+      if (signal?.aborted) return;
       if (asReview) setReview(t);
       else {
         setDetail(t);
-        setHistory(await api("/topics/" + id + "/history"));
+        const history = await api(
+          "/topics/" + id + "/history",
+          "GET",
+          undefined,
+          { signal },
+        );
+        if (!signal?.aborted) setHistory(history);
       }
     } catch (e: any) {
-      setError(e.message);
+      if (!signal?.aborted) setError(e.message);
     }
   }
   const now = DateTime.now().setZone(prefs.timezone),
@@ -184,22 +322,28 @@ function App() {
               A little review, at just the right time. Give your knowledge a
               place to grow with a schedule that adapts to you.
             </p>
-            <a
-              className="button primary"
-              href="/api/v1/auth/google/start"
-              onClick={(e) => {
-                if (usesFirebase) {
-                  e.preventDefault();
-                  login().catch((e) => setError(e.message));
-                }
-              }}
-            >
-              Continue with Google <ArrowUpRight size={18} />
-            </a>
+            {usesFirebase ? (
+              <Button className="primary" disabled={signingIn} onClick={signIn}>
+                {signingIn ? "Opening Google Sign-In…" : "Continue with Google"}
+                <ArrowUpRight size={18} />
+              </Button>
+            ) : (
+              <a className="button primary" href="/api/v1/auth/google/start">
+                Continue with Google <ArrowUpRight size={18} />
+              </a>
+            )}
             <p className="fine-print">
               Your calendar is optional. Your potential isn’t.
             </p>
             {error && <p role="alert">{error}</p>}
+            {identity && error && (
+              <Button
+                onClick={() => setSessionAttempt((attempt) => attempt + 1)}
+                disabled={signingIn}
+              >
+                Retry loading workspace
+              </Button>
+            )}
           </div>
           <div className="orbit-art" aria-hidden="true">
             <div className="orbit one" />
@@ -264,13 +408,8 @@ function App() {
               <Button
                 className="icon-button"
                 aria-label="Log out"
-                onClick={() =>
-                  action(async () => {
-                    await api("/auth/logout", "POST");
-                    setUser(null);
-                    return { signedOut: true };
-                  }, "Signed out")
-                }
+                disabled={busy}
+                onClick={signOut}
               >
                 <LogOut size={16} />
               </Button>
@@ -421,15 +560,7 @@ function App() {
                   <p>
                     {user.display_name} · {user.email}
                   </p>
-                  <Button
-                    onClick={() =>
-                      action(async () => {
-                        await api("/auth/logout", "POST");
-                        setUser(null);
-                        return { signedOut: true };
-                      }, "Signed out")
-                    }
-                  >
+                  <Button disabled={busy} onClick={signOut}>
                     Sign out
                   </Button>
                 </div>
@@ -696,7 +827,7 @@ function App() {
             </Button>
           </Dialog>
         )}
-        {user && !prefs.onboarded && (
+        {dashboard !== emptyDashboard && !prefs.onboarded && (
           <Dialog
             title="Find your learning rhythm."
             description="A few preferences, then you’re ready. Google Calendar is optional."

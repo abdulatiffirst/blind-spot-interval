@@ -1,18 +1,25 @@
 import { usesFirebase, authToken, logout } from "./firebase";
+import type { User } from "firebase/auth";
 let csrf = "";
 export const setCsrf = (value: string) => {
   csrf = value;
 };
-export async function api(path: string, method = "GET", body?: unknown) {
+export async function api(
+  path: string,
+  method = "GET",
+  body?: unknown,
+  { user, signal }: { user?: User; signal?: AbortSignal } = {},
+) {
   if (usesFirebase && path === "/auth/logout") {
     await logout();
     return { ok: true };
   }
-  const token = usesFirebase ? await authToken() : null;
+  const token = usesFirebase ? await authToken(user) : null;
   if (usesFirebase && !token)
     throw Object.assign(new Error("Sign in to continue"), { status: 401 });
   const r = await fetch("/api/v1" + path, {
     method,
+    signal,
     credentials: "same-origin",
     headers: {
       ...(body === undefined ? {} : { "content-type": "application/json" }),
@@ -31,7 +38,11 @@ export async function api(path: string, method = "GET", body?: unknown) {
   return value;
 }
 
-export async function loadTopics(archived: boolean, sort: string) {
+export async function loadTopics(
+  archived: boolean,
+  sort: string,
+  signal?: AbortSignal,
+) {
   const items = [];
   let total: number;
   do {
@@ -42,6 +53,9 @@ export async function loadTopics(archived: boolean, sort: string) {
         archived +
         "&sort=" +
         sort,
+      "GET",
+      undefined,
+      { signal },
     );
     items.push(...page.items);
     total = page.total;

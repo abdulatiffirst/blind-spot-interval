@@ -64,7 +64,16 @@ beforeAll(async () => {
   for (let i = 0; i < 2; i++) {
     const u = await googleUser();
     users.push(u);
-    expect((await request("/me", "GET", undefined, u)).status).toBe(200);
+    const me = await request("/me", "GET", undefined, u);
+    expect(me.status).toBe(200);
+    expect(me.data.user).toMatchObject({
+      id: u.uid,
+      email: expect.stringMatching(/@example\.invalid$/),
+      display_name: "Firebase Test Learner",
+    });
+    expect(
+      (await db.doc(`users/${u.uid}/preferences/default`).get()).data(),
+    ).toEqual(defaults);
   }
 });
 afterAll(async () => {
@@ -79,6 +88,50 @@ afterAll(async () => {
   }
 });
 describe("Firebase Auth → Functions v2 → real Firestore emulator", () => {
+  it("rejects missing, invalid, and disabled-account tokens in /me", async () => {
+    const missing = await fetch(base + "/me");
+    expect(missing.status).toBe(401);
+    expect(await missing.json()).toEqual({ error: "Sign in to continue" });
+    const invalid = await request("/me", "GET", undefined, {
+      uid: "unused",
+      token: "invalid",
+    });
+    expect(invalid).toEqual({
+      status: 401,
+      data: { error: "Session expired or invalid" },
+    });
+    const disabled = await googleUser();
+    try {
+      await auth.updateUser(disabled.uid, { disabled: true });
+      expect(await request("/me", "GET", undefined, disabled)).toEqual(invalid);
+      expect((await db.doc(`users/${disabled.uid}`).get()).exists).toBe(false);
+    } finally {
+      await auth.deleteUser(disabled.uid);
+    }
+  });
+
+  it("rejects a valid Firebase token from a non-Google provider", async () => {
+    const signUp = await fetch(
+      "http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signUp?key=demo-api-key",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ returnSecureToken: true }),
+      },
+    );
+    expect(signUp.ok).toBe(true);
+    const { localId: uid, idToken: token } = await signUp.json();
+    try {
+      expect(await request("/me", "GET", undefined, { uid, token })).toEqual({
+        status: 403,
+        data: { error: "Use Google Sign-In" },
+      });
+      expect((await db.doc(`users/${uid}`).get()).exists).toBe(false);
+    } finally {
+      await auth.deleteUser(uid);
+    }
+  });
+
   it("rejects unauthenticated requests and invalid input", async () => {
     const r = await fetch(base + "/topics");
     expect(r.status).toBe(401);

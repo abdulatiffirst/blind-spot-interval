@@ -1,4 +1,4 @@
-import { initializeApp, getApps } from "firebase/app";
+import { FirebaseError, initializeApp, getApps } from "firebase/app";
 import {
   getAuth,
   connectAuthEmulator,
@@ -7,6 +7,7 @@ import {
   signOut,
   onAuthStateChanged,
   type Auth,
+  type User,
 } from "firebase/auth";
 export const usesFirebase = import.meta.env.VITE_BACKEND !== "legacy";
 export const usesEmulators =
@@ -38,35 +39,72 @@ export function firebaseAuth() {
         `${projectId}.firebaseapp.com`,
       appId: import.meta.env.VITE_FIREBASE_APP_ID,
     });
-  client = getAuth(app);
+  const auth = getAuth(app);
   if (usesEmulators)
-    connectAuthEmulator(client, "http://127.0.0.1:9099", {
+    connectAuthEmulator(auth, "http://127.0.0.1:9099", {
       disableWarnings: true,
     });
-  return client;
+  client = auth;
+  return auth;
 }
-export function observeAuth(listener: () => void) {
-  if (!usesFirebase) {
-    listener();
-    return () => {};
-  }
-  try {
-    return onAuthStateChanged(firebaseAuth(), listener);
-  } catch {
-    listener();
-    return () => {};
-  }
+export function observeAuth(
+  listener: (user: User | null) => void,
+  onError: (error: Error) => void,
+) {
+  return onAuthStateChanged(firebaseAuth(), listener, onError);
 }
-export async function authToken() {
+export async function authToken(user?: User) {
   if (!usesFirebase) return null;
+  if (user) return user.getIdToken();
   const auth = firebaseAuth();
   await auth.authStateReady();
   return auth.currentUser ? auth.currentUser.getIdToken() : null;
 }
+export function signInErrorMessage(error: unknown) {
+  switch (error instanceof FirebaseError && error.code) {
+    case "auth/popup-blocked":
+      return "Your browser blocked the Google sign-in window. Allow pop-ups for this site and try again.";
+    case "auth/popup-closed-by-user":
+      return "The Google sign-in window closed. Try again to sign in.";
+    case "auth/timeout":
+      return "Google Sign-In timed out. Close the sign-in window and try again.";
+    case "auth/network-request-failed":
+      return "Could not reach Google Sign-In. Check your connection and try again.";
+    case "auth/web-storage-unsupported":
+      return "Google Sign-In could not use browser storage. Allow site storage for this site and try again.";
+    case "auth/unauthorized-domain":
+      return "Google Sign-In is unavailable on this domain. Contact support.";
+    case "auth/account-exists-with-different-credential":
+      return "An account already exists with a different sign-in method. Contact support.";
+    default:
+      return "Google Sign-In did not complete. Try again.";
+  }
+}
 export async function login() {
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: "select_account" });
-  await signInWithPopup(firebaseAuth(), provider);
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const popup = signInWithPopup(firebaseAuth(), provider);
+    const deadline = new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => {
+        reject(new FirebaseError("auth/timeout", "Google Sign-In timed out."));
+      }, 120_000);
+    });
+    const { user } = await Promise.race([popup, deadline]);
+    if (import.meta.env.DEV)
+      console.info("Firebase Google Sign-In completed", { signedIn: !!user });
+    return user;
+  } catch (error) {
+    if (import.meta.env.DEV)
+      console.error("Firebase Google Sign-In failed", {
+        code: error instanceof FirebaseError ? error.code : "unknown",
+        message: signInErrorMessage(error),
+      });
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 export async function logout() {
   await signOut(firebaseAuth());
