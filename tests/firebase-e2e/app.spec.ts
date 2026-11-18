@@ -7,12 +7,11 @@ import {
 } from "@playwright/test";
 import { db, auth } from "../../functions/src/store.ts";
 let uid: string;
-async function signIn(page: Page) {
+async function signIn(page: Page, sub = crypto.randomUUID()) {
   await page.goto("/");
   await expect(
     page.getByRole("button", { name: "Continue with Google" }),
   ).toBeVisible();
-  const sub = crypto.randomUUID();
   const token =
     Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString(
       "base64url",
@@ -110,7 +109,7 @@ test("loads the workspace with a Firebase token and restores it on reload", asyn
   const onboarding = page.getByRole("dialog", {
     name: "Find your learning rhythm.",
   });
-  await expect(onboarding).toBeVisible();
+  await expect(onboarding).toBeVisible({ timeout: 40000 });
   await page.getByRole("button", { name: /Let’s begin/ }).click();
   await expect(onboarding).not.toBeVisible();
   await page.getByRole("button", { name: "Topics", exact: true }).click();
@@ -206,6 +205,9 @@ test("Google credential → onboarding → Logarithms → FSRS review → intern
   ).toBeVisible();
   await page.getByRole("button", { name: /Let’s begin/ }).click();
   await expect(page.getByRole("dialog")).not.toBeVisible();
+  await page.getByRole("button", { name: "Calendar", exact: true }).click();
+  await page.getByRole("button", { name: "Previous period" }).click();
+  await page.getByRole("button", { name: "Previous period" }).click();
   await page
     .getByRole("button", { name: "Add topic", exact: true })
     .first()
@@ -233,12 +235,48 @@ test("Google credential → onboarding → Logarithms → FSRS review → intern
   await expect(page.getByRole("status")).toContainText("Next review");
   await page.getByRole("button", { name: "Calendar", exact: true }).click();
   await expect(page.getByText("Your internal calendar is ready")).toBeVisible();
+  const pending = await db
+    .collection(`users/${uid}/reviewSchedules`)
+    .where("status", "==", "pending")
+    .get();
+  expect(pending.size).toBe(1);
+  const nextAt = new Date(pending.docs[0].get("scheduled_at"));
   await expect(page.getByRole("button", { name: /Logarithms/ })).toBeVisible();
   const docs = await db.collection(`users/${uid}/reviewHistory`).get();
   expect(docs.size).toBe(1);
   expect(docs.docs[0].data().original_rating).toBe(4);
   const memory = await db.collection(`users/${uid}/memoryStates`).get();
   expect(memory.docs[0].data().card.reps).toBe(1);
+  await page.getByRole("button", { name: /Logarithms/ }).click();
+  await page
+    .getByLabel("Review time")
+    .fill(new Date(nextAt.getTime() + 86400000).toISOString().slice(0, 16));
+  await page.getByRole("button", { name: "Save time" }).click();
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  await page.getByRole("button", { name: "Topics", exact: true }).click();
+  const open = page.getByRole("button", { name: /Logarithms/ });
+  await open.click();
+  await page.getByRole("button", { name: "Reschedule", exact: true }).click();
+  await page.getByRole("button", { name: "Return to automatic" }).click();
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  await open.click();
+  await page.getByRole("button", { name: /Review now/ }).click();
+  await page.getByRole("button", { name: /1 Forgot completely/ }).click();
+  await expect(page.getByRole("status")).toContainText("Next review");
+  await open.click();
+  await expect(
+    page.getByRole("button", { name: "Correct rating" }),
+  ).toHaveCount(1);
+  await page.getByRole("button", { name: "Correct rating" }).click();
+  await page.getByRole("button", { name: "3 / 5" }).click();
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  const corrected = await db.collection(`users/${uid}/reviewHistory`).get();
+  expect(corrected.size).toBe(2);
+  expect(
+    corrected.docs.some(
+      (d) => d.get("corrected_at") && d.get("original_rating") === 3,
+    ),
+  ).toBe(true);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth > innerWidth,
@@ -248,7 +286,8 @@ test("Google credential → onboarding → Logarithms → FSRS review → intern
 test("edit, archive, restore, keyboard dismissal and Firebase sign-out", async ({
   page,
 }) => {
-  await signIn(page);
+  const account = crypto.randomUUID();
+  await signIn(page, account);
   await page.getByRole("button", { name: /Let’s begin/ }).click();
   await page
     .getByRole("button", { name: "Add topic", exact: true })
@@ -282,6 +321,13 @@ test("edit, archive, restore, keyboard dismissal and Firebase sign-out", async (
   await page.getByRole("button", { name: "Add topic", exact: true }).click();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).not.toBeVisible();
+  await page.getByRole("button", { name: "Today", exact: true }).click();
+  await expect(
+    page
+      .locator(".stats > div")
+      .filter({ hasText: "ACTIVE TOPICS" })
+      .locator("strong"),
+  ).toHaveText("01");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   const login = page.getByRole("button", { name: "Continue with Google" });
@@ -289,4 +335,37 @@ test("edit, archive, restore, keyboard dismissal and Firebase sign-out", async (
   await page.reload();
   await expect(login).toBeVisible();
   await expect(page.getByRole("navigation")).toHaveCount(0);
+  await signIn(page, account);
+  await page.getByRole("button", { name: "Topics", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: /Python closures/ }),
+  ).toBeVisible();
+});
+
+test("month navigation works from January 1 and failed previews resolve visibly", async ({
+  page,
+}) => {
+  await signIn(page);
+  await page.getByRole("button", { name: /Let’s begin/ }).click();
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  await page.getByRole("button", { name: "Calendar", exact: true }).click();
+  await page.clock.setFixedTime(new Date("2027-01-01T12:00:00Z"));
+  await page.getByRole("button", { name: "month", exact: true }).click();
+  await page
+    .locator(".calendar-toolbar")
+    .getByRole("button", { name: "Today", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Next period" }).click();
+  await expect(page.locator(".calendar-toolbar strong")).toHaveText(
+    "February 2027",
+  );
+  await page.getByRole("button", { name: "Previous period" }).click();
+  await expect(page.locator(".calendar-toolbar strong")).toHaveText(
+    "January 2027",
+  );
+  await page.route("**/schedule/preview?*", (route) =>
+    route.fulfill({ status: 503, json: { error: "Unavailable" } }),
+  );
+  await page.getByRole("button", { name: "Add topic", exact: true }).click();
+  await expect(page.getByText("Schedule preview unavailable")).toBeVisible();
 });

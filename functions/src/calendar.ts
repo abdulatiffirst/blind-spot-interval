@@ -192,7 +192,9 @@ export class CalendarSync {
       throw Object.assign(new Error(`Google Calendar returned ${r.status}`), {
         status: r.status,
       });
-    return r.status === 204 ? null : (r.json() as Promise<any>);
+    return options.method === "DELETE" || r.status === 204
+      ? null
+      : (r.json() as Promise<any>);
   }
   async ensure() {
     const c = await this.connection();
@@ -474,7 +476,6 @@ export class CalendarSync {
       .update({
         sync_token: finalToken ?? sync ?? null,
         last_sync_at: new Date().toISOString(),
-        error: null,
       });
   }
   async freeBusy() {

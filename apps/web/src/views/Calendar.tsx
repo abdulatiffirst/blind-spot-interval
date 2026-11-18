@@ -79,14 +79,11 @@ export function CalendarView({
             aria-label="Previous period"
             onClick={() =>
               setAnchor(
-                anchor.minus({
-                  days:
-                    calendarMode === "day"
-                      ? 1
-                      : calendarMode === "week"
-                        ? 7
-                        : 30,
-                }),
+                anchor.minus(
+                  calendarMode === "month"
+                    ? { months: 1 }
+                    : { days: calendarMode === "week" ? 7 : 1 },
+                ),
               )
             }
           >
@@ -98,14 +95,11 @@ export function CalendarView({
             aria-label="Next period"
             onClick={() =>
               setAnchor(
-                anchor.plus({
-                  days:
-                    calendarMode === "day"
-                      ? 1
-                      : calendarMode === "week"
-                        ? 7
-                        : 30,
-                }),
+                anchor.plus(
+                  calendarMode === "month"
+                    ? { months: 1 }
+                    : { days: calendarMode === "week" ? 7 : 1 },
+                ),
               )
             }
           >

@@ -2,10 +2,9 @@ import { ArrowUpRight, ArrowRight, Layers3, Plus } from "lucide-react";
 import type { Preferences } from "../../../../packages/shared/src/index";
 import { Empty, ReviewRow } from "../components";
 import { date } from "../date";
-import type { Review, Topic } from "../types";
+import type { Review } from "../types";
 import { Button } from "../ui";
 export function TodayView({
-  topics,
   reviews,
   today,
   prefs,
@@ -14,13 +13,12 @@ export function TodayView({
   setEditor,
   setSection,
 }: {
-  topics: Topic[];
   reviews: Review[];
   today: Review[];
   prefs: Preferences;
   progress: number;
   openTopic: (id: string, review?: boolean) => void;
-  setEditor: (topic: Topic | "new") => void;
+  setEditor: (topic: "new") => void;
   setSection: (section: string) => void;
 }) {
   return (
@@ -54,9 +52,8 @@ export function TodayView({
             ACTIVE TOPICS <Layers3 size={16} />
           </span>
           <strong>
-            {topics
-              .filter((t) => t.status === "active")
-              .length.toString()
+            {new Set(reviews.map((r) => r.topic_id)).size
+              .toString()
               .padStart(2, "0")}
           </strong>
           <small>Ideas you’re making your own</small>

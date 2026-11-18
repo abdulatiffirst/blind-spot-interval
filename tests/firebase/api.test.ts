@@ -267,6 +267,7 @@ describe("Firebase Auth → Functions v2 → real Firestore emulator", () => {
     expect(result.map((r) => r.status)).toEqual([200, 200]);
     expect(result.map((r) => r.data.duplicate).sort()).toEqual([false, true]);
     const t = (await request("/topics/" + topic.id)).data;
+    for (const r of result) expect(r.data.next.id).toBe(t.schedule.id);
     expect(t.memory.review_count).toBe(1);
     expect(t.memory.card.reps).toBe(1);
     expect(t.memory.card.stabilityFast).toBeGreaterThan(0);
@@ -291,6 +292,12 @@ describe("Firebase Auth → Functions v2 → real Firestore emulator", () => {
     const t = (await request("/topics/" + topic.id)).data;
     expect(t.memory.review_count).toBe(1);
     expect(t.schedule.recovery).toBe(true);
+    const again = await request(
+      "/reviews/" + topic.schedule.id + "/correct",
+      "POST",
+      { rating: 2 },
+    );
+    expect(again.data.next.id).toBe(t.schedule.id);
     expect(
       (await db.collection(`users/${users[0].uid}/reviewCorrections`).get())
         .size,
@@ -307,6 +314,8 @@ describe("Firebase Auth → Functions v2 → real Firestore emulator", () => {
     ).toBe(200);
     const after = (await request("/topics/" + topic.id)).data;
     expect(after.memory).toEqual(before.memory);
+    expect(after.schedule.recovery).toBe(true);
+    expect(after.schedule.ideal_due_at).toBe(before.schedule.ideal_due_at);
     expect(
       (await request("/topics/" + topic.id + "/history")).data,
     ).toHaveLength(1);
@@ -321,4 +330,123 @@ describe("Firebase Auth → Functions v2 → real Firestore emulator", () => {
       1,
     );
   });
+});
+
+it("preserves untouched fields during material and title updates", async () => {
+  const r = await request("/topics", "POST", {
+    title: "Audit",
+    tags: ["audit"],
+    materials: ["old"],
+    importance: 5,
+    duration: 35,
+  });
+  const path = "/topics/" + r.data.id;
+  expect(
+    (await request(path + "/materials", "PUT", { materials: ["new"] })).status,
+  ).toBe(200);
+  const updated = await request(path, "PATCH", { title: "Renamed" });
+  expect(updated.data).toMatchObject({
+    importance: 5,
+    duration: 35,
+    tags: ["audit"],
+    materials: [{ text: "new" }],
+  });
+  for (const endpoint of [
+    "/reviews/today",
+    "/tags",
+    "/reviews/progress",
+    "/schedule/preview?duration=20",
+  ]) {
+    expect((await request(endpoint)).status).toBe(200);
+  }
+  expect((await request("/schedule/preview?duration=1")).status).toBe(400);
+  expect(
+    (await request(path + "/materials", "PUT", { materials: 123 })).status,
+  ).toBe(400);
+  expect((await request("/calendar/resync", "POST")).status).toBe(200);
+  expect((await request("/calendar/disconnect", "POST")).status).toBe(200);
+  expect((await request("/auth/logout", "POST")).status).toBe(200);
+});
+
+it("serves health, validates callback and webhook inputs, and enforces the per-user request limit", async () => {
+  expect((await fetch(base.replace(/\/api\/v1$/, "/health"))).status).toBe(200);
+  expect((await fetch(base + "/calendar/callback")).status).toBe(400);
+  expect(
+    (await fetch(base + "/webhooks/google-calendar", { method: "POST" }))
+      .status,
+  ).toBe(403);
+  expect(
+    (
+      await request("/calendar/connect", "GET", undefined, users[0], {
+        origin: "https://untrusted.invalid",
+      })
+    ).status,
+  ).toBe(403);
+  expect((await request("/unimplemented")).status).toBe(404);
+  expect((await request("/topics/invalid.id")).status).toBe(400);
+  const { digest } = await import("../../functions/src/domain.ts");
+  const minute = Math.floor(Date.now() / 60000);
+  const buckets = [minute, minute + 1].map((m) =>
+    db.collection("rateLimits").doc(digest(users[1].uid + ":" + m)),
+  );
+  try {
+    for (const bucket of buckets) await bucket.set({ count: 180 });
+    expect((await request("/me", "GET", undefined, users[1])).status).toBe(429);
+    expect((await request("/me")).status).toBe(200);
+  } finally {
+    for (const bucket of buckets) await bucket.delete();
+  }
+});
+
+it("rejects a previously valid Google session after revocation", async () => {
+  const subject = await googleUser();
+  try {
+    const decoded = await auth.verifyIdToken(subject.token, true);
+    // Firebase compares auth_time and validSince in whole seconds.
+    await new Promise((resolve) =>
+      setTimeout(
+        resolve,
+        Math.max(0, (decoded.auth_time + 1) * 1000 - Date.now() + 50),
+      ),
+    );
+    await auth.revokeRefreshTokens(subject.uid);
+    expect((await request("/me", "GET", undefined, subject)).status).toBe(401);
+  } finally {
+    await auth.deleteUser(subject.uid);
+  }
+});
+
+it("begins OAuth over HTTP with a browser-bound HttpOnly state cookie", async () => {
+  const { createApp } = await import("../../functions/src/http.ts");
+  const { vi } = await import("vitest");
+  vi.stubEnv("GOOGLE_CLIENT_ID", "emulator-test");
+  vi.stubEnv("GOOGLE_CLIENT_SECRET", "emulator-test");
+  vi.stubEnv("TOKEN_ENCRYPTION_KEY", "a".repeat(64));
+  const server = createApp().listen(0, "127.0.0.1");
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("listening", resolve);
+      server.once("error", reject);
+    });
+    const address = server.address();
+    if (!address || typeof address === "string")
+      throw Error("Expected local TCP listener");
+    const response = await fetch(
+      "http://127.0.0.1:" + address.port + "/api/v1/calendar/connect",
+      { headers: { authorization: "Bearer " + users[0].token } },
+    );
+    expect(response.status).toBe(200);
+    const cookie = response.headers.get("set-cookie") ?? "";
+    const url = new URL((await response.json()).url);
+    expect(url.origin).toBe("https://accounts.google.com");
+    expect(
+      cookie.includes("__session=" + url.searchParams.get("state")) &&
+        cookie.includes("HttpOnly"),
+    ).toBe(true);
+  } finally {
+    vi.unstubAllEnvs();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
 });

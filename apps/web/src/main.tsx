@@ -82,7 +82,7 @@ function App() {
     [busy, setBusy] = useState(false),
     [correct, setCorrect] = useState<any>(null);
   const [calendarMode, setCalendarMode] = useState("week"),
-    [anchor, setAnchor] = useState<DateTime>(DateTime.local().startOf("day"));
+    [anchor, setAnchor] = useState<DateTime | null>(null);
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
     localStorage.setItem("theme", dark ? "dark" : "light");
@@ -172,8 +172,10 @@ function App() {
     };
   }, [identity, sessionAttempt]);
 
+  const latestRefresh = useRef(0);
   const refresh = useCallback(
     async (signal?: AbortSignal) => {
+      const sequence = ++latestRefresh.current;
       const [ts, reviews, prefs, calendar, progress] = await Promise.all([
         loadTopics(archived, sort, signal),
         api("/reviews/upcoming", "GET", undefined, { signal }),
@@ -181,7 +183,7 @@ function App() {
         api("/calendar/status", "GET", undefined, { signal }),
         api("/reviews/progress", "GET", undefined, { signal }),
       ]);
-      if (signal?.aborted) return;
+      if (signal?.aborted || sequence !== latestRefresh.current) return;
       setDashboard({
         topics: ts.items,
         reviews,
@@ -237,6 +239,7 @@ function App() {
   async function action(fn: () => Promise<any>, message: string) {
     const signal = session.current;
     setBusy(true);
+    setNotice("");
     setError("");
     try {
       const result = await fn();
@@ -257,24 +260,25 @@ function App() {
       return { signedOut: true };
     }, "Signed out");
   }
+  const latestTopicRequest = useRef(0);
   async function openTopic(id: string, asReview = false) {
     const signal = session.current ?? undefined;
+    const sequence = ++latestTopicRequest.current;
+    const path = "/topics/" + id;
     try {
-      const t = await api("/topics/" + id, "GET", undefined, { signal });
-      if (signal?.aborted) return;
-      if (asReview) setReview(t);
+      const [topic, entries] = await Promise.all([
+        api(path, "GET", undefined, { signal }),
+        asReview ? [] : api(path + "/history", "GET", undefined, { signal }),
+      ]);
+      if (signal?.aborted || sequence !== latestTopicRequest.current) return;
+      if (asReview) setReview(topic);
       else {
-        setDetail(t);
-        const history = await api(
-          "/topics/" + id + "/history",
-          "GET",
-          undefined,
-          { signal },
-        );
-        if (!signal?.aborted) setHistory(history);
+        setHistory(entries);
+        setDetail(topic);
       }
     } catch (e: any) {
-      if (!signal?.aborted) setError(e.message);
+      if (!signal?.aborted && sequence === latestTopicRequest.current)
+        setError(e.message);
     }
   }
   const now = DateTime.now().setZone(prefs.timezone),
@@ -448,7 +452,6 @@ function App() {
             )}
             {section === "Today" && (
               <TodayView
-                topics={topics}
                 reviews={reviews}
                 today={today}
                 prefs={prefs}
@@ -483,7 +486,10 @@ function App() {
                 setEditor={setEditor}
                 calendarMode={calendarMode}
                 setCalendarMode={setCalendarMode}
-                anchor={anchor}
+                anchor={
+                  anchor?.setZone(prefs.timezone).startOf("day") ??
+                  now.startOf("day")
+                }
                 setAnchor={setAnchor}
                 now={now}
                 reviews={reviews}
@@ -667,21 +673,25 @@ function App() {
             </div>
             <h3 className="history-heading">Review history</h3>
             {history.length ? (
-              history.map((h) => (
+              history.map((h, index) => (
                 <div className="history-row" key={h.id}>
                   <span>
                     {date(h.completed_at, prefs.timezone)} · {h.original_rating}
                     /5
                     {h.corrected_at ? " (corrected)" : ""}
                   </span>
-                  <Button
-                    onClick={() => {
-                      setCorrect(h);
-                      setDetail(null);
-                    }}
-                  >
-                    Correct rating
-                  </Button>
+                  {index === 0 &&
+                    detail.status === "active" &&
+                    detail.schedule?.mode !== "manual" && (
+                      <Button
+                        onClick={() => {
+                          setCorrect(h);
+                          setDetail(null);
+                        }}
+                      >
+                        Correct rating
+                      </Button>
+                    )}
                 </div>
               ))
             ) : (
@@ -722,6 +732,17 @@ function App() {
                           { rating: i + 1 },
                         );
                         setReview(null);
+                        if (r.next?.scheduled_at)
+                          setAnchor(
+                            DateTime.fromISO(r.next.scheduled_at)
+                              .setZone(prefs.timezone)
+                              .startOf("day"),
+                          );
+                        if (r.next && !r.next.scheduled_at)
+                          return (
+                            r.next.adjustment_reason ??
+                            "Next review needs a time. Open Calendar to adjust it."
+                          );
                         return `Review complete. Next review: ${date(r.next?.scheduled_at ?? null, prefs.timezone)}`;
                       }, "Review completed")
                     }
@@ -854,7 +875,9 @@ function App() {
   );
 }
 
-createRoot(document.getElementById("root")!).render(
+const root = createRoot(document.getElementById("root")!);
+if (import.meta.hot) import.meta.hot.dispose(() => root.unmount());
+root.render(
   <React.StrictMode>
     <App />
   </React.StrictMode>,

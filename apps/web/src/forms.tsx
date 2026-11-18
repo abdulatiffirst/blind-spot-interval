@@ -34,21 +34,29 @@ export function TopicEditor({
       topic?.materials.map((m) => m.text) ?? [""],
     ),
     [preview, setPreview] = useState<any>(null),
+    [previewFailed, setPreviewFailed] = useState(false),
     [manual, setManual] = useState("");
   useEffect(() => {
+    if (topic) return;
+    setPreview(null);
+    setPreviewFailed(false);
     const controller = new AbortController();
     const q = new URLSearchParams({
       duration: String(duration),
       ...(knowledge ? { knowledge: String(knowledge) } : {}),
       ...(importance ? { importance: String(importance) } : {}),
     });
-    api("/schedule/preview?" + q)
+    api("/schedule/preview?" + q, "GET", undefined, {
+      signal: controller.signal,
+    })
       .then((v) => {
         if (!controller.signal.aborted) setPreview(v);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!controller.signal.aborted) setPreviewFailed(true);
+      });
     return () => controller.abort();
-  }, [knowledge, importance, duration]);
+  }, [topic, knowledge, importance, duration]);
   function move(i: number, offset: number) {
     const copy = [...materials];
     [copy[i], copy[i + offset]] = [copy[i + offset], copy[i]];
@@ -259,12 +267,18 @@ export function TopicEditor({
             <div>
               <span className="eyebrow">YOUR FIRST REVIEW</span>
               <strong>
-                {preview ? date(preview.start, prefs.timezone) : "Calculating…"}
+                {preview
+                  ? date(preview.start, prefs.timezone)
+                  : previewFailed
+                    ? "Schedule preview unavailable"
+                    : "Calculating…"}
               </strong>
               <span>
                 {duration} min ·{" "}
-                {preview ? Math.round(preview.retention * 100) : 90}% target
-                retention · {manual ? "Manual" : "Automatic"}
+                {preview
+                  ? Math.round(preview.retention * 100)
+                  : Math.round(prefs.retention[(importance ?? 3) - 1] * 100)}
+                % target retention · {manual ? "Manual" : "Automatic"}
               </span>
             </div>
             <label>

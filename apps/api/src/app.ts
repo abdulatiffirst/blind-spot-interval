@@ -162,24 +162,9 @@ export async function buildApp() {
   app.get("/api/v1/topics/:id", (req) =>
     service.details(req.userId, (req.params as any).id),
   );
-  app.patch("/api/v1/topics/:id", async (req) => {
-    const id = (req.params as any).id,
-      old = await service.details(req.userId, id);
-    const update = topicInput.partial().parse(req.body);
-    return service.editTopic(
-      req.userId,
-      id,
-      topicInput.parse({
-        title: old.title,
-        initialKnowledge: old.initial_knowledge,
-        importance: old.importance,
-        duration: old.duration,
-        tags: old.tags,
-        materials: old.materials.map((m) => m.text),
-        ...update,
-      }),
-    );
-  });
+  app.patch("/api/v1/topics/:id", (req) =>
+    service.editTopic(req.userId, (req.params as any).id, req.body),
+  );
   app.post("/api/v1/topics/:id/archive", async (req) => {
     await service.archive(req.userId, (req.params as any).id);
     return { ok: true };
@@ -189,19 +174,10 @@ export async function buildApp() {
     return { ok: true };
   });
   app.put("/api/v1/topics/:id/materials", async (req) => {
-    const id = (req.params as any).id,
-      old = await service.details(req.userId, id);
     const items = z
-      .object({ materials: topicInput.shape.materials })
+      .object({ materials: topicInput.shape.materials.unwrap() })
       .parse(req.body);
-    return service.editTopic(req.userId, id, {
-      title: old.title,
-      initialKnowledge: old.initial_knowledge,
-      importance: old.importance,
-      duration: old.duration,
-      tags: old.tags,
-      ...items,
-    });
+    return service.editTopic(req.userId, (req.params as any).id, items);
   });
   app.get("/api/v1/topics/:id/history", async (req) => {
     const id = (req.params as any).id;

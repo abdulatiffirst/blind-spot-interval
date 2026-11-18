@@ -40,3 +40,7 @@ functions/.env*
 !functions/.env.example
 backups/
 .firebase.headless.json
+
+/.env.*
+!/.env.example
+!/.env.firebase.example

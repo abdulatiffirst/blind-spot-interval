@@ -12,6 +12,7 @@ import {
   type Busy,
 } from "../../../packages/calendar-scheduler/src/index.ts";
 import {
+  applyTopicPatch,
   defaults,
   safeUrl,
   type TopicInput,
@@ -67,13 +68,17 @@ export async function owned(
     await tx`SELECT * FROM topics WHERE id=${id} AND user_id=${user}`;
   return (row as TopicRecord) ?? fail(404, "Topic not found");
 }
-export async function details(user: string, id: string) {
-  const topic = await owned(user, id);
+export async function details(
+  user: string,
+  id: string,
+  tx: Tx | typeof sql = sql,
+) {
+  const topic = await owned(user, id, tx);
   const [materials, tags, memory, schedules] = await Promise.all([
-    sql`SELECT text,url,position FROM topic_materials WHERE topic_id=${id} ORDER BY position`,
-    sql`SELECT t.name FROM tags t JOIN topic_tags tt ON tt.tag_id=t.id WHERE tt.topic_id=${id} ORDER BY t.name`,
-    sql`SELECT * FROM memory_states WHERE topic_id=${id}`,
-    sql`SELECT * FROM review_schedules WHERE topic_id=${id} AND status='pending'`,
+    tx`SELECT text,url,position FROM topic_materials WHERE topic_id=${id} ORDER BY position`,
+    tx`SELECT t.name FROM tags t JOIN topic_tags tt ON tt.tag_id=t.id WHERE tt.topic_id=${id} ORDER BY t.name`,
+    tx`SELECT * FROM memory_states WHERE topic_id=${id}`,
+    tx`SELECT * FROM review_schedules WHERE topic_id=${id} AND status='pending'`,
   ]);
   return {
     ...topic,
@@ -190,10 +195,21 @@ export async function createTopic(
   });
   return details(user, id);
 }
-export async function editTopic(user: string, id: string, input: TopicInput) {
+export async function editTopic(user: string, id: string, patch: unknown) {
   await sql.begin(async (tx) => {
     await lock(tx, user);
-    const old = await owned(user, id, tx);
+    const old = await details(user, id, tx);
+    const input = applyTopicPatch(
+      {
+        title: old.title,
+        initialKnowledge: old.initial_knowledge,
+        importance: old.importance,
+        duration: old.duration,
+        tags: old.tags,
+        materials: old.materials.map((m) => m.text),
+      },
+      patch,
+    );
     const p = await preferences(user, tx);
     await tx`UPDATE topics SET title=${input.title},importance=${input.importance},target_retention=${p.retention[(input.importance ?? 3) - 1]},duration=${input.duration},updated_at=now() WHERE id=${id}`;
     await materials(tx, id, input.materials);
@@ -225,10 +241,15 @@ export async function archive(user: string, id: string, restore = false) {
     if (restore) {
       const [m] = await tx`SELECT * FROM memory_states WHERE topic_id=${id}`;
       const p = await preferences(user, tx);
-      const ideal = m.card?.dueAt
-        ? new Date(m.card.dueAt)
-        : coldStart(new Date(), topic.initial_knowledge, p.timezone);
-      await makeSchedule(tx, user, topic, ideal);
+      const [last] =
+        await tx`SELECT original_rating,completed_at FROM review_logs WHERE topic_id=${id} ORDER BY completed_at DESC LIMIT 1`;
+      const recovery = !!last && last.original_rating <= 2;
+      const ideal = recovery
+        ? coldStart(new Date(last.completed_at), null, p.timezone)
+        : m.card?.dueAt
+          ? new Date(m.card.dueAt)
+          : coldStart(new Date(), topic.initial_knowledge, p.timezone);
+      await makeSchedule(tx, user, topic, ideal, { recovery });
     } else
       await tx`UPDATE review_schedules SET status='cancelled' WHERE topic_id=${id} AND status='pending'`;
     await enqueue(tx, user);
@@ -267,10 +288,15 @@ export async function complete(
     if (!s) fail(404, "Review not found");
     const [existing] =
       await tx`SELECT * FROM review_logs WHERE schedule_id=${scheduleId}`;
-    if (existing && !correction) return { duplicate: true, review: existing };
+    if (existing && !correction) {
+      const [pending] =
+        await tx`SELECT * FROM review_schedules WHERE topic_id=${s.topic_id} AND status='pending'`;
+      return { duplicate: true, review: existing, next: pending ?? null };
+    }
     if (!existing && s.status !== "pending")
       fail(409, "Review is no longer pending");
     const topic = await owned(user, s.topic_id, tx);
+    if (topic.status !== "active") fail(409, "Topic is archived");
     const [memory] =
       await tx`SELECT * FROM memory_states WHERE topic_id=${s.topic_id}`;
     const p = await preferences(user, tx);
@@ -285,6 +311,8 @@ export async function complete(
         fail(409, "Only the latest review can be corrected");
       const pending =
         await tx`SELECT * FROM review_schedules WHERE topic_id=${s.topic_id} AND status='pending'`;
+      if (existing.original_rating === rating && pending[0])
+        return { duplicate: true, review: existing, next: pending[0] };
       if (pending.some((v) => v.mode === "manual"))
         fail(
           409,

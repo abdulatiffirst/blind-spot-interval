@@ -15,6 +15,7 @@ import {
   defaults,
   preferencesInput,
   topicInput,
+  applyTopicPatch,
   safeUrl,
   type Preferences,
   type TopicInput,
@@ -299,16 +300,17 @@ export async function createTopic(uid: string, raw: unknown, key?: string) {
 export async function editTopic(uid: string, id: string, raw: unknown) {
   await mutate(uid, async (tx, read, rows, root) => {
     const c = await context(read, rows, id);
-    const update = topicInput.partial().parse(raw);
-    const input = topicInput.parse({
-      title: c.topic.title,
-      initialKnowledge: c.topic.initial_knowledge,
-      importance: c.topic.importance,
-      duration: c.topic.duration,
-      tags: c.topic.tags,
-      materials: c.materials.map((m: RecordData) => m.text),
-      ...update,
-    });
+    const input = applyTopicPatch(
+      {
+        title: c.topic.title,
+        initialKnowledge: c.topic.initial_knowledge,
+        importance: c.topic.importance,
+        duration: c.topic.duration,
+        tags: c.topic.tags,
+        materials: c.materials.map((m: RecordData) => m.text),
+      },
+      raw,
+    );
     const topic: RecordData = {
       ...c.topic,
       title: input.title,
@@ -356,18 +358,24 @@ export async function archive(uid: string, id: string, restore = false) {
       (s) => s.id === c.topic.pendingScheduleId && s.status === "pending",
     );
     if (restore) {
-      const ideal = c.memory?.card?.dueAt
-        ? new Date(c.memory.card.dueAt)
-        : coldStart(now, c.topic.initial_knowledge, c.p.timezone);
+      const last = c.memory?.latestReviewId
+        ? await read("reviewHistory", c.memory.latestReviewId)
+        : null;
+      const recovery = !!last && last.original_rating <= 2;
+      const ideal = recovery
+        ? coldStart(new Date(last!.completed_at), null, c.p.timezone)
+        : c.memory?.card?.dueAt
+          ? new Date(c.memory.card.dueAt)
+          : coldStart(now, c.topic.initial_knowledge, c.p.timezone);
       tx.create(collection(uid, "reviewSchedules").doc(nextId), {
         id: nextId,
         topic_id: id,
         ideal_due_at: ideal.toISOString(),
         duration: c.topic.duration,
         status: "pending",
-        recovery: false,
+        recovery,
         created_at: now.toISOString(),
-        ...placement(c.topic, ideal, c.p, c.sessions, now),
+        ...placement(c.topic, ideal, c.p, c.sessions, now, { recovery }),
       });
     } else if (pending)
       tx.update(collection(uid, "reviewSchedules").doc(pending.id), {
@@ -417,7 +425,13 @@ export async function complete(
       read("reviewHistory", id),
     ]);
     if (!session) fail(404, "Review not found");
-    if (existing && !correct) return { duplicate: true, review: existing };
+    if (existing && !correct) {
+      const topic = await read("topics", session.topic_id);
+      const next = topic?.pendingScheduleId
+        ? await read("reviewSchedules", topic.pendingScheduleId)
+        : null;
+      return { duplicate: true, review: existing, next };
+    }
     if (session.status !== "pending" && !correct)
       fail(409, "Review is no longer pending");
     const c = await context(read, rows, session.topic_id);
@@ -430,6 +444,8 @@ export async function complete(
     if (correct) {
       if (!existing || c.memory.latestReviewId !== id)
         fail(409, "Only the latest review can be corrected");
+      if (existing.original_rating === rating && pending)
+        return { duplicate: true, review: existing, next: pending };
       if (pending?.mode === "manual")
         fail(
           409,

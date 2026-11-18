@@ -31,21 +31,35 @@ export async function processJob(id: string, transport?: typeof fetch) {
   });
   if (!claim) return false;
   let error: string | null = null;
+  let connectionGeneration: number | undefined;
   try {
     const sync = new CalendarSync(claim.uid, transport);
-    if (await sync.connection()) {
+    const connected = await sync.connection();
+    if (connected) {
+      connectionGeneration = connected.generation;
       if (claim.type !== "outbound") await sync.inbound();
-      await sync.freeBusy();
-      await sync.outbound();
+      // Publish the committed internal schedule even if availability is temporarily unavailable.
+      // The job still retries the failed availability check and can adjust conflicts then.
+      try {
+        await sync.freeBusy();
+      } finally {
+        await sync.outbound();
+      }
       await sync.watch();
     }
   } catch (e: any) {
-    error = String(e.message).slice(0, 200);
+    const status = e?.status;
+    error =
+      Number.isInteger(status) && status >= 400 && status < 600
+        ? `Google Calendar synchronization returned ${status}`
+        : "Calendar synchronization failed. Check the connection and retry.";
   }
   await db.runTransaction(async (tx) => {
-    const [s, l] = await Promise.all([
+    const connectionRef = db.collection("calendarConnections").doc(claim.uid);
+    const [s, l, connection] = await Promise.all([
       tx.get(ref),
       tx.get(db.collection("syncLocks").doc(claim.uid)),
+      tx.get(connectionRef),
     ]);
     if (s.data()?.leaseToken !== token || l.data()?.token !== token) return;
     tx.update(ref, {
@@ -60,12 +74,11 @@ export async function processJob(id: string, transport?: typeof fetch) {
         : { expiresAt: new Date(Date.now() + 30 * 86400000) }),
     });
     tx.delete(l.ref);
-    if (error)
-      tx.set(
-        db.collection("calendarConnections").doc(claim.uid),
-        { error },
-        { merge: true },
-      );
+    if (
+      connection.get("connected") &&
+      connection.get("generation") === connectionGeneration
+    )
+      tx.update(connectionRef, { error });
   });
   return true;
 }

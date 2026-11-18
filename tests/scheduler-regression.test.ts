@@ -39,3 +39,19 @@ it("invalid timezone and ideal dates are rejected", () => {
     }),
   ).toThrow();
 });
+
+it("keeps a recovery review inside custom hours across the autumn clock change", () => {
+  const result = schedule({
+    ...base,
+    now: new Date("2026-10-31T20:00:00Z"),
+    ideal: new Date("2026-11-01T04:00:00Z"),
+    recovery: true,
+    preferences: {
+      ...defaults,
+      timezone: "America/New_York",
+      studyStart: "09:30",
+      studyEnd: "10:00",
+    },
+  });
+  expect(result.start).toBe("2026-11-01T14:30:00.000Z");
+});

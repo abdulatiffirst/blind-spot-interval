@@ -2,6 +2,7 @@ import { beforeAll, afterAll, it, expect } from "vitest";
 import { Timestamp } from "firebase-admin/firestore";
 import { db, collection } from "../../functions/src/store.ts";
 import {
+  complete,
   ensureUser,
   createTopic,
   details,
@@ -82,7 +83,7 @@ const transport: typeof fetch = async (input, opts = {}) => {
   if (!e) return Response.json({}, { status: 404 });
   if (method === "DELETE") {
     events.delete(id);
-    return new Response(null, { status: 204 });
+    return new Response(null, { status: 200 });
   }
   if (method === "PATCH") {
     const next = { ...e, ...body, etag: "v" + ++version };
@@ -316,6 +317,78 @@ it("renews push watches and avoids duplicate renewal while active", async () => 
   } finally {
     delete process.env.WEBHOOK_ORIGIN;
   }
+});
+it("replaces a future event after early completion and converges on retry", async () => {
+  await sync.outbound();
+  const original = (await details(uid, topic.id)).schedule;
+  expect(Date.parse(original.scheduled_at)).toBeGreaterThan(Date.now());
+  const oldEvent = (
+    await collection(uid, "calendarEvents").doc(original.id).get()
+  ).get("google_event_id");
+  expect(events.has(oldEvent)).toBe(true);
+  const outbox = db.collection("syncJobs").where("uid", "==", uid);
+  const previousJobs = new Set((await outbox.get()).docs.map((doc) => doc.id));
+  const result = await complete(uid, original.id, 2);
+  const created = (await outbox.get()).docs.filter(
+    (doc) => !previousJobs.has(doc.id) && doc.get("type") === "outbound",
+  );
+  expect(created).toHaveLength(1);
+  const ref = created[0].ref;
+  const next = result.next!;
+  expect((await details(uid, topic.id)).pendingScheduleId).toBe(next.id);
+  expect(
+    (await collection(uid, "reviewSchedules").doc(original.id).get()).get(
+      "status",
+    ),
+  ).toBe("completed");
+  expect(
+    (await collection(uid, "reviewHistory").doc(original.id).get()).exists,
+  ).toBe(true);
+  const unavailable: typeof fetch = (url, options) =>
+    String(url).endsWith("/freeBusy")
+      ? Promise.resolve(Response.json({}, { status: 429 }))
+      : transport(url, options);
+  async function run(google: typeof fetch) {
+    await expect
+      .poll(
+        async () => {
+          // Advance backoff for this demo job. Respect any lease held by the emulator trigger.
+          await db.runTransaction(async (tx) => {
+            const job = await tx.get(ref);
+            if (
+              job.get("status") === "pending" &&
+              job.get("retryAt") > Date.now()
+            )
+              tx.update(ref, { retryAt: 0 });
+          });
+          return processJob(ref.id, google);
+        },
+        { timeout: 20000 },
+      )
+      .toBe(true);
+  }
+  await run(unavailable);
+  expect((await ref.get()).get("status")).toBe("pending");
+  expect(events.has(oldEvent)).toBe(false);
+  const replacement = [...events.values()].filter(
+    (e) => e.extendedProperties?.private.blindSpotSchedule === next.id,
+  );
+  expect(replacement).toHaveLength(1);
+  expect(replacement[0].start.dateTime).toBe(next.scheduled_at);
+  await run(async () => {
+    throw new Error("private transport detail");
+  });
+  expect((await ref.get()).get("error")).toBe(
+    "Calendar synchronization failed. Check the connection and retry.",
+  );
+  expect((await sync.connection())?.error).toBe((await ref.get()).get("error"));
+  await run(transport);
+  expect((await ref.get()).get("status")).toBe("done");
+  expect(
+    [...events.values()].filter((event) => event.status !== "cancelled"),
+  ).toHaveLength(1);
+  expect((await sync.connection())?.error).toBeNull();
+  expect(await processJob(ref.id, transport)).toBe(false);
 });
 it("leased durable jobs retry with backoff and are not completed on external failure", async () => {
   const id = retryJob;

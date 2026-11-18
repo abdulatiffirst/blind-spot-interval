@@ -81,3 +81,22 @@ describe("FSRS-7 memory policy", () => {
     );
   });
 });
+
+it("schedules repeated early failures on the following local day across fall DST", async () => {
+  let card = null;
+  for (const timestamp of [
+    "2026-10-31T23:30:00Z",
+    "2026-11-01T06:30:00Z",
+    "2026-11-01T06:40:00Z",
+  ]) {
+    const at = new Date(timestamp);
+    const result = await advance(card, 1, 0.9, at, "America/New_York");
+    expect(result.ideal.getTime()).toBeGreaterThan(at.getTime());
+    const local = DateTime.fromJSDate(at, { zone: "America/New_York" });
+    expect(result.ideal.toISOString()).toBe(
+      local.plus({ days: 1 }).startOf("day").toJSDate().toISOString(),
+    );
+    expect(result.card.difficulty).toBeGreaterThan(0);
+    card = result.card;
+  }
+});

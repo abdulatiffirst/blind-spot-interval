@@ -13,6 +13,10 @@ export const topicInput = z.object({
     .refine((v) => Date.parse(v) > Date.now(), "Choose a future time")
     .optional(),
 });
+export function applyTopicPatch(current: unknown, patch: unknown) {
+  const fields = z.record(z.string(), z.unknown());
+  return topicInput.parse({ ...fields.parse(current), ...fields.parse(patch) });
+}
 export const preferencesInput = z
   .object({
     timezone: z

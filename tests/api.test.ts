@@ -81,6 +81,22 @@ describe("PostgreSQL-backed API", () => {
     expect(topic.memory.card).toBeNull();
     expect(topic.schedule.status).toBe("pending");
   });
+  it("merges concurrent partial topic edits and rejects missing materials", async () => {
+    const path = "/topics/" + topic.id;
+    const responses = await Promise.all([
+      request(path, "PATCH", { title: "Logarithms II" }),
+      request(path + "/materials", "PUT", { materials: ["Updated note"] }),
+    ]);
+    expect(responses.map((r) => r.statusCode)).toEqual([200, 200]);
+    expect((await request(path + "/materials", "PUT", {})).statusCode).toBe(
+      400,
+    );
+    expect((await request(path)).json()).toMatchObject({
+      title: "Logarithms II",
+      tags: ["Math"],
+      materials: [{ text: "Updated note" }],
+    });
+  });
   it("blocks cross-user access and invalid IDs", async () => {
     const other = random();
     await sql`INSERT INTO sessions(id,user_id,csrf,expires_at) VALUES(${hash(other)},${users[1]},${csrf},now()+interval '1 hour')`;
@@ -127,6 +143,8 @@ describe("PostgreSQL-backed API", () => {
     ]);
     const t = (await request("/topics/" + topic.id)).json();
     expect(t.memory.review_count).toBe(1);
+    for (const result of results)
+      expect(result.json().next.id).toBe(t.schedule.id);
     expect(t.schedule.id).not.toBe(topic.schedule.id);
     expect(new Date(t.memory.last_review_at).getTime()).toBeLessThanOrEqual(
       Date.now(),
@@ -150,19 +168,37 @@ describe("PostgreSQL-backed API", () => {
       await sql`SELECT * FROM review_corrections WHERE review_id IN(SELECT id FROM review_logs WHERE topic_id=${topic.id})`;
     expect(audit.old_rating).toBe(2);
     expect(audit.new_rating).toBe(5);
+    const replay = await request(
+      "/reviews/" + topic.schedule.id + "/correct",
+      "POST",
+      { rating: 5 },
+    );
+    expect(replay.json().next.id).toBe(t.schedule.id);
+    expect(replay.json().duplicate).toBe(true);
   });
   it("archives and restores without deleting history or resetting memory", async () => {
+    await request("/reviews/" + topic.schedule.id + "/correct", "POST", {
+      rating: 1,
+    });
     const before = (await request("/topics/" + topic.id)).json();
     expect(
       (await request("/topics/" + topic.id + "/archive", "POST", {}))
         .statusCode,
     ).toBe(200);
+    expect(
+      (
+        await request("/reviews/" + topic.schedule.id + "/correct", "POST", {
+          rating: 3,
+        })
+      ).statusCode,
+    ).toBe(409);
     expect((await request("/topics/" + topic.id)).json().schedule).toBeNull();
     expect(
       (await request("/topics/" + topic.id + "/restore", "POST", {}))
         .statusCode,
     ).toBe(200);
     const after = (await request("/topics/" + topic.id)).json();
+    expect(after.schedule.ideal_due_at).toBe(before.schedule.ideal_due_at);
     expect(after.memory).toEqual(before.memory);
     expect(
       (await request("/topics/" + topic.id + "/history")).json(),
