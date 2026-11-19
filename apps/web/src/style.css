@@ -1552,3 +1552,17 @@ input::placeholder {
   background: var(--lime);
   color: #111322;
 }
+
+.google-g {
+  flex: none;
+  object-fit: contain;
+}
+input.numeric-input {
+  min-height: 44px;
+  font-size: 1rem;
+}
+.numeric-error {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--text);
+}

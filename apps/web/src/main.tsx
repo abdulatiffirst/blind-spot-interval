@@ -336,12 +336,25 @@ function App() {
             </p>
             {usesFirebase ? (
               <Button className="primary" disabled={signingIn} onClick={signIn}>
+                <img
+                  className="google-g"
+                  src="/google-g.png"
+                  width="20"
+                  height="20"
+                  alt=""
+                />
                 {signingIn ? "Opening Google Sign-In…" : "Continue with Google"}
-                <ArrowUpRight size={18} />
               </Button>
             ) : (
               <a className="button primary" href="/api/v1/auth/google/start">
-                Continue with Google <ArrowUpRight size={18} />
+                <img
+                  className="google-g"
+                  src="/google-g.png"
+                  width="20"
+                  height="20"
+                  alt=""
+                />
+                Continue with Google
               </a>
             )}
             <p className="fine-print">

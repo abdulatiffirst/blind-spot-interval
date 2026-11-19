@@ -67,7 +67,16 @@ test("reports failed Google popup initialization and allows a retry", async ({
   await page.goto("/");
   const login = page.getByRole("button", { name: "Continue with Google" });
   const error = page.getByRole("alert");
-  await login.click();
+  const logo = login.locator('img[src="/google-g.png"]');
+  await expect(logo).toBeVisible();
+  expect(
+    await logo.evaluate((img) =>
+      (img as HTMLImageElement)
+        .decode()
+        .then(() => img.getBoundingClientRect().width),
+    ),
+  ).toBe(20);
+  await logo.click();
   await expect(error).toHaveText("Google Sign-In did not complete. Try again.");
   await expect(login).toBeEnabled();
   await login.click();
@@ -368,4 +377,51 @@ test("month navigation works from January 1 and failed previews resolve visibly"
   );
   await page.getByRole("button", { name: "Add topic", exact: true }).click();
   await expect(page.getByText("Schedule preview unavailable")).toBeVisible();
+});
+
+test("numeric fields support direct editing, validation and fractional retention", async ({
+  page,
+}) => {
+  await signIn(page);
+  const setup = page.getByRole("dialog", {
+    name: "Find your learning rhythm.",
+  });
+  const minutes = setup.getByRole("textbox", { name: /Default duration/ });
+  await expect(minutes).toBeVisible({ timeout: 40000 });
+  await expect(minutes).toHaveAttribute("inputmode", "numeric");
+  await minutes.fill("");
+  await expect(minutes).toHaveValue("");
+  const submit = setup.getByRole("button", { name: /Let’s begin/ });
+  for (const invalid of ["", "4", "181", "8.5", "abc"]) {
+    await minutes.fill(invalid);
+    await submit.click();
+    await expect(minutes).toHaveAttribute("aria-invalid", "true");
+    await expect(minutes).toHaveValue(invalid);
+  }
+  await minutes.fill("005");
+  await minutes.hover();
+  await minutes.focus();
+  await page.mouse.wheel(0, 120);
+  await expect(minutes).toBeFocused();
+  await expect(minutes).toHaveValue("005");
+  await minutes.press("Tab");
+  await expect(minutes).toHaveValue("5");
+  await minutes.fill("180");
+  await submit.click();
+  await expect(setup).not.toBeVisible();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(page.getByLabel(/Default duration/)).toHaveValue("180");
+  await page.getByText("Advanced memory preferences", { exact: true }).click();
+  const retention = page.getByLabel(/Importance 1 retention/);
+  await expect(retention).toHaveAttribute("inputmode", "decimal");
+  await retention.fill("85,5");
+  await retention.press("Enter");
+  await expect
+    .poll(
+      async () =>
+        (
+          await db.collection(`users/${uid}/preferences`).doc("default").get()
+        ).get("retention")[0],
+    )
+    .toBeCloseTo(0.855, 8);
 });

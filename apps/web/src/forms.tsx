@@ -1,3 +1,4 @@
+import { NumericInput } from "./NumericInput";
 import { TagInput } from "./TagInput";
 import { TimezonePicker } from "./TimezonePicker";
 import { addWords, initialZone } from "./form-options";
@@ -266,13 +267,12 @@ export function TopicEditor({
         </Button>
         <label>
           Review duration (minutes)
-          <input
-            type="number"
+          <NumericInput
             min={5}
             max={180}
-            required
+
             value={duration}
-            onChange={(e) => setDuration(Number(e.target.value))}
+            onChange={setDuration}
           />
         </label>
         {!topic && (
@@ -432,13 +432,11 @@ export function SettingsForm({
       </div>
       <label>
         Default duration (minutes)
-        <input
-          required
-          type="number"
+        <NumericInput
           min={5}
           max={180}
           value={p.duration}
-          onChange={(e) => update("duration", Number(e.target.value))}
+          onChange={(number) => update("duration", number)}
         />
       </label>
       {!compact && (
@@ -447,24 +445,20 @@ export function SettingsForm({
           <div className="form-columns">
             <label>
               Days before ideal date
-              <input
-                required
-                type="number"
+              <NumericInput
                 min={0}
                 max={7}
                 value={p.daysBefore}
-                onChange={(e) => update("daysBefore", Number(e.target.value))}
+                onChange={(number) => update("daysBefore", number)}
               />
             </label>
             <label>
               Days after ideal date
-              <input
-                required
-                type="number"
+              <NumericInput
                 min={0}
                 max={14}
                 value={p.daysAfter}
-                onChange={(e) => update("daysAfter", Number(e.target.value))}
+                onChange={(number) => update("daysAfter", number)}
               />
             </label>
           </div>
@@ -477,18 +471,15 @@ export function SettingsForm({
             {p.retention.map((value, i) => (
               <label key={i}>
                 Importance {i + 1} retention (%)
-                <input
-                  required
-                  type="number"
+                <NumericInput
                   min={80}
                   max={97}
-                  value={Math.round(value * 100)}
-                  onChange={(e) =>
+                  decimal
+                  value={Number((value * 100).toPrecision(15))}
+                  onChange={(number) =>
                     update(
                       "retention",
-                      p.retention.map((v, j) =>
-                        i === j ? Number(e.target.value) / 100 : v,
-                      ),
+                      p.retention.map((v, j) => (i === j ? number / 100 : v)),
                     )
                   }
                 />
