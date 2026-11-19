@@ -36,6 +36,14 @@ export function Dialog({
         <DialogPrimitive.Overlay className="overlay" />
         <DialogPrimitive.Content
           className="dialog"
+          onEscapeKeyDown={(e) => {
+            if (
+              document.activeElement?.matches(
+                '[role="combobox"][aria-expanded="true"]',
+              )
+            )
+              e.preventDefault();
+          }}
           onCloseAutoFocus={(e) => {
             e.preventDefault();
             requestAnimationFrame(

@@ -883,10 +883,7 @@ function App() {
             onClose={() => {}}
           >
             <SettingsForm
-              prefs={{
-                ...prefs,
-                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-              }}
+              prefs={prefs}
               busy={busy}
               compact
               onSave={(p) =>

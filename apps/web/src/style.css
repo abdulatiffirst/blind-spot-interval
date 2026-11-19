@@ -1471,3 +1471,84 @@ input::placeholder {
   flex: 1;
   max-width: 180px;
 }
+
+.form-picker {
+  position: relative;
+  margin-block: 0.8rem;
+  min-width: 0;
+}
+.zone-trigger,
+.chip-field,
+.option-panel {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.zone-trigger,
+.chip-field {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 8px;
+  padding: 10px;
+}
+.zone-trigger {
+  justify-content: space-between;
+  text-align: start;
+}
+.chip-field {
+  flex-wrap: wrap;
+}
+.chip-field:focus-within {
+  outline: 2px solid var(--violet);
+}
+.chip-field input {
+  flex: 1 1 8rem;
+  min-width: 0;
+  width: auto;
+  margin: 0;
+  border: 0;
+  padding: 4px;
+  background: transparent;
+}
+.input-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  background: var(--soft);
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+.input-chip button {
+  padding: 3px 6px;
+}
+.option-panel {
+  padding: 5px;
+}
+.option-panel [role="listbox"],
+.option-panel[role="listbox"] {
+  max-height: min(15rem, 35dvh);
+  overflow-y: auto;
+}
+.option-panel [role="option"] {
+  cursor: pointer;
+  padding: 7px 10px;
+  font-size: 0.86rem;
+}
+.option-panel [role="option"]:hover,
+.option-panel [data-active="true"] {
+  background: var(--soft);
+  outline: 1px solid var(--border);
+  outline-offset: -1px;
+}
+.option-panel small {
+  display: block;
+  color: var(--muted);
+}
+.option-panel mark {
+  background: var(--lime);
+  color: #111322;
+}

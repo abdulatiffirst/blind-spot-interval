@@ -6,6 +6,7 @@ export default defineConfig({
       "tests/scheduler*.test.ts",
       "tests/security.test.ts",
       "tests/web-config.test.ts",
+      "tests/form-options.test.ts",
     ],
     fileParallelism: false,
     testTimeout: 30000,

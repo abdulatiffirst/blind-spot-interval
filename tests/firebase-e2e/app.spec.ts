@@ -216,7 +216,7 @@ test("Google credential → onboarding → Logarithms → FSRS review → intern
   await dialog.getByRole("textbox", { name: /Topic name/ }).fill("Logarithms");
   await dialog.getByLabel("Initial knowledge").selectOption("3");
   await dialog.getByLabel("Importance").selectOption("5");
-  await dialog.getByLabel(/Tags/).fill("Mathematics, Exam");
+  await dialog.getByLabel(/Tags/).fill("Mathematics Exam");
   await dialog
     .getByLabel("Material 1", { exact: true })
     .fill("Recall logarithm properties");

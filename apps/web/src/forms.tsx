@@ -1,3 +1,6 @@
+import { TagInput } from "./TagInput";
+import { TimezonePicker } from "./TimezonePicker";
+import { addWords, initialZone } from "./form-options";
 import { ArrowRight, Check, GripVertical, Plus, Trash2 } from "lucide-react";
 import { DateTime } from "luxon";
 import { useEffect, useState } from "react";
@@ -29,7 +32,9 @@ export function TopicEditor({
       topic?.importance ?? null,
     ),
     [duration, setDuration] = useState(topic?.duration ?? prefs.duration),
-    [tagText, setTagText] = useState(topic?.tags.join(", ") ?? ""),
+    [selectedTags, setTags] = useState<string[]>(topic?.tags ?? []),
+    [draft, setDraft] = useState(""),
+    [tagError, setTagError] = useState(""),
     [materials, setMaterials] = useState<string[]>(
       topic?.materials.map((m) => m.text) ?? [""],
     ),
@@ -57,6 +62,17 @@ export function TopicEditor({
       });
     return () => controller.abort();
   }, [topic, knowledge, importance, duration]);
+  const [knownTags, setKnownTags] = useState<string[]>(tags);
+  useEffect(() => {
+    const controller = new AbortController();
+    api("/tags", "GET", undefined, { signal: controller.signal })
+      .then((rows: { name: string }[]) => {
+        if (!controller.signal.aborted)
+          setKnownTags(rows.map((row) => row.name));
+      })
+      .catch(() => {}); // Loaded topic tags remain available if the optional lookup fails.
+    return () => controller.abort();
+  }, []);
   function move(i: number, offset: number) {
     const copy = [...materials];
     [copy[i], copy[i + offset]] = [copy[i + offset], copy[i]];
@@ -71,15 +87,17 @@ export function TopicEditor({
       <form
         onSubmit={(e) => {
           e.preventDefault();
+          const entered = addWords(selectedTags, draft);
+          if (entered.error) {
+            setTagError(entered.error);
+            return;
+          }
           onSave({
             title,
             initialKnowledge: knowledge,
             importance,
             duration,
-            tags: tagText
-              .split(",")
-              .map((t) => t.trim())
-              .filter(Boolean),
+            tags: entered.tags,
             materials: materials.filter((t) => t.trim()),
             ...(!topic && manual
               ? {
@@ -157,20 +175,15 @@ export function TopicEditor({
             </select>
           </div>
         </div>
-        <label>
-          Tags <span className="muted">separate with commas</span>
-          <input
-            list="existing-tags"
-            value={tagText}
-            onChange={(e) => setTagText(e.target.value)}
-            placeholder="e.g. Mathematics, Exam prep"
-          />
-          <datalist id="existing-tags">
-            {tags.map((t) => (
-              <option key={t} value={t} />
-            ))}
-          </datalist>
-        </label>
+        <TagInput
+          tags={selectedTags}
+          setTags={setTags}
+          draft={draft}
+          setDraft={setDraft}
+          error={tagError}
+          setError={setTagError}
+          suggestions={knownTags}
+        />
         <label>Study materials</label>
         <div className="material-editor">
           {materials.map((text, i) => (
@@ -374,7 +387,14 @@ export function SettingsForm({
   compact?: boolean;
 }) {
   const [p, setP] = useState(prefs);
-  useEffect(() => setP(prefs), [prefs]);
+  useEffect(
+    () =>
+      setP({
+        ...prefs,
+        timezone: initialZone(prefs.timezone, compact && !prefs.onboarded),
+      }),
+    [prefs, compact],
+  );
   const update = (key: keyof Preferences, value: any) =>
     setP({ ...p, [key]: value });
   return (
@@ -386,15 +406,10 @@ export function SettingsForm({
       }}
     >
       <h2>Study preferences</h2>
-      <label>
-        Timezone
-        <input
-          required
-          value={p.timezone}
-          onChange={(e) => update("timezone", e.target.value)}
-          placeholder="Asia/Tashkent"
-        />
-      </label>
+      <TimezonePicker
+        value={p.timezone}
+        onChange={(v) => update("timezone", v)}
+      />
       <div className="form-columns">
         <label>
           Study hours start
