@@ -4,7 +4,7 @@ import { TimezonePicker } from "./TimezonePicker";
 import { addWords } from "./form-options";
 import { ArrowRight, Check, GripVertical, Plus, Trash2 } from "lucide-react";
 import { DateTime } from "luxon";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Preferences } from "../../../packages/shared/src/index";
 import { api } from "./api";
 import { date } from "./date";
@@ -25,6 +25,23 @@ export function TopicEditor({
   onClose: () => void;
   onSave: (v: any) => void;
 }) {
+  const formRef = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const dialog = formRef.current?.closest<HTMLElement>(".dialog");
+    if (!viewport || !dialog) return;
+    const resize = () => {
+      dialog.style.maxHeight = viewport.height - 16 + "px";
+      dialog.style.top = viewport.offsetTop + viewport.height / 2 + "px";
+    };
+    resize();
+    viewport.addEventListener("resize", resize);
+    viewport.addEventListener("scroll", resize);
+    return () => {
+      viewport.removeEventListener("resize", resize);
+      viewport.removeEventListener("scroll", resize);
+    };
+  }, []);
   const [title, setTitle] = useState(topic?.title ?? ""),
     [knowledge, setKnowledge] = useState<number | null>(
       topic?.initial_knowledge ?? null,
@@ -82,10 +99,12 @@ export function TopicEditor({
   return (
     <Dialog
       title={topic ? "Edit your topic" : "What did you learn?"}
-      description="A topic today. Knowledge that lasts."
+      description="Only a topic name is required."
       onClose={onClose}
     >
       <form
+        ref={formRef}
+        className="topic-editor"
         onSubmit={(e) => {
           e.preventDefault();
           const entered = addWords(selectedTags, draft);
@@ -118,193 +137,207 @@ export function TopicEditor({
             autoFocus
             required
             maxLength={200}
-            placeholder="e.g. The change-of-base formula"
+            placeholder="For example: Chain rule"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
           />
         </label>
-        <div className="form-columns">
-          <div>
-            <label htmlFor="knowledge">
-              Initial knowledge <span className="muted">optional</span>
-            </label>
-            <select
-              id="knowledge"
-              value={knowledge ?? ""}
-              disabled={!!topic}
-              onChange={(e) =>
-                setKnowledge(e.target.value ? Number(e.target.value) : null)
-              }
-            >
-              <option value="">Not assessed</option>
-              {[
-                "Completely new",
-                "Limited knowledge",
-                "Moderate knowledge",
-                "Good knowledge",
-                "Excellent knowledge",
-              ].map((s, i) => (
-                <option key={s} value={i + 1}>
-                  {i + 1} — {s}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label htmlFor="importance">
-              Importance <span className="muted">optional</span>
-            </label>
-            <select
-              id="importance"
-              value={importance ?? ""}
-              onChange={(e) =>
-                setImportance(e.target.value ? Number(e.target.value) : null)
-              }
-            >
-              <option value="">Not set</option>
-              {[
-                "Low importance",
-                "Somewhat important",
-                "Normal",
-                "Very important",
-                "Essential",
-              ].map((s, i) => (
-                <option key={s} value={i + 1}>
-                  {i + 1} — {s}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <TagInput
-          tags={selectedTags}
-          setTags={setTags}
-          draft={draft}
-          setDraft={setDraft}
-          error={tagError}
-          setError={setTagError}
-          suggestions={knownTags}
-        />
-        <label>Study materials</label>
-        <div className="material-editor">
-          {materials.map((text, i) => (
-            <div className="material-line" key={i}>
-              <GripVertical size={15} />
-              <input
-                aria-label={`Material ${i + 1}`}
-                value={text}
-                placeholder="A note, a link, a little reminder…"
-                onChange={(e) =>
-                  setMaterials(
-                    materials.map((m, j) => (i === j ? e.target.value : m)),
-                  )
-                }
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    setMaterials([
-                      ...materials.slice(0, i + 1),
-                      "",
-                      ...materials.slice(i + 1),
-                    ]);
-                    setTimeout(
-                      () =>
-                        document
-                          .querySelector<HTMLInputElement>(
-                            `[aria-label="Material ${i + 2}"]`,
-                          )
-                          ?.focus(),
-                      0,
-                    );
-                  }
-                  if (e.key === "Backspace" && !text && materials.length > 1) {
-                    e.preventDefault();
-                    setMaterials(materials.filter((_, j) => i !== j));
-                  }
-                }}
-              />
-              <Button
-                type="button"
-                className="icon-button"
-                aria-label={`Move material ${i + 1} up`}
-                disabled={i === 0}
-                onClick={() => move(i, -1)}
-              >
-                ↑
-              </Button>
-              <Button
-                type="button"
-                className="icon-button"
-                aria-label={`Move material ${i + 1} down`}
-                disabled={i === materials.length - 1}
-                onClick={() => move(i, 1)}
-              >
-                ↓
-              </Button>
-              <Button
-                type="button"
-                className="icon-button"
-                aria-label={`Delete material ${i + 1}`}
-                onClick={() =>
-                  setMaterials(
-                    materials.length === 1
-                      ? [""]
-                      : materials.filter((_, j) => i !== j),
-                  )
-                }
-              >
-                <Trash2 size={15} />
-              </Button>
-            </div>
-          ))}
-        </div>
-        <Button
-          type="button"
-          className="text-button"
-          onClick={() => setMaterials([...materials, ""])}
-        >
-          <Plus size={14} /> Add bullet
-        </Button>
-        <label>
-          Review duration (minutes)
-          <NumericInput
-            min={5}
-            max={180}
-
-            value={duration}
-            onChange={setDuration}
-          />
-        </label>
-        {!topic && (
-          <div className="preview">
+        <details className="topic-options">
+          <summary>More options</summary>
+          <div className="form-columns">
             <div>
-              <span className="eyebrow">YOUR FIRST REVIEW</span>
-              <strong>
-                {preview
-                  ? date(preview.start, prefs.timezone)
-                  : previewFailed
-                    ? "Schedule preview unavailable"
-                    : "Calculating…"}
-              </strong>
-              <span>
-                {duration} min ·{" "}
-                {preview
-                  ? Math.round(preview.retention * 100)
-                  : Math.round(prefs.retention[(importance ?? 3) - 1] * 100)}
-                % target retention · {manual ? "Manual" : "Automatic"}
-              </span>
+              <label htmlFor="knowledge">
+                Initial knowledge <span className="muted">optional</span>
+              </label>
+              <select
+                id="knowledge"
+                value={knowledge ?? ""}
+                disabled={!!topic}
+                onChange={(e) =>
+                  setKnowledge(e.target.value ? Number(e.target.value) : null)
+                }
+              >
+                <option value="">Not assessed</option>
+                {[
+                  "Completely new",
+                  "Limited knowledge",
+                  "Moderate knowledge",
+                  "Good knowledge",
+                  "Excellent knowledge",
+                ].map((s, i) => (
+                  <option key={s} value={i + 1}>
+                    {i + 1} — {s}
+                  </option>
+                ))}
+              </select>
             </div>
-            <label>
-              Change date ({prefs.timezone})
-              <input
-                type="datetime-local"
-                value={manual}
-                onChange={(e) => setManual(e.target.value)}
-              />
-            </label>
-            {preview?.reason && <p>{preview.reason}</p>}
+            <div>
+              <label htmlFor="importance">
+                Importance <span className="muted">optional</span>
+              </label>
+              <select
+                id="importance"
+                value={importance ?? ""}
+                onChange={(e) =>
+                  setImportance(e.target.value ? Number(e.target.value) : null)
+                }
+              >
+                <option value="">Not set</option>
+                {[
+                  "Low importance",
+                  "Somewhat important",
+                  "Normal",
+                  "Very important",
+                  "Essential",
+                ].map((s, i) => (
+                  <option key={s} value={i + 1}>
+                    {i + 1} — {s}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
-        )}
+          <TagInput
+            tags={selectedTags}
+            setTags={setTags}
+            draft={draft}
+            setDraft={setDraft}
+            error={tagError}
+            setError={setTagError}
+            suggestions={knownTags}
+          />
+          <label>Study materials</label>
+          <div className="material-editor">
+            {materials.map((text, i) => (
+              <div className="material-line" key={i}>
+                <GripVertical size={15} />
+                <input
+                  aria-label={`Material ${i + 1}`}
+                  value={text}
+                  placeholder="A note, a link, a little reminder…"
+                  onChange={(e) =>
+                    setMaterials(
+                      materials.map((m, j) => (i === j ? e.target.value : m)),
+                    )
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      setMaterials([
+                        ...materials.slice(0, i + 1),
+                        "",
+                        ...materials.slice(i + 1),
+                      ]);
+                      setTimeout(
+                        () =>
+                          document
+                            .querySelector<HTMLInputElement>(
+                              `[aria-label="Material ${i + 2}"]`,
+                            )
+                            ?.focus(),
+                        0,
+                      );
+                    }
+                    if (
+                      e.key === "Backspace" &&
+                      !text &&
+                      materials.length > 1
+                    ) {
+                      e.preventDefault();
+                      setMaterials(materials.filter((_, j) => i !== j));
+                    }
+                  }}
+                />
+                <Button
+                  type="button"
+                  className="icon-button"
+                  aria-label={`Move material ${i + 1} up`}
+                  disabled={i === 0}
+                  onClick={() => move(i, -1)}
+                >
+                  ↑
+                </Button>
+                <Button
+                  type="button"
+                  className="icon-button"
+                  aria-label={`Move material ${i + 1} down`}
+                  disabled={i === materials.length - 1}
+                  onClick={() => move(i, 1)}
+                >
+                  ↓
+                </Button>
+                <Button
+                  type="button"
+                  className="icon-button"
+                  aria-label={`Delete material ${i + 1}`}
+                  onClick={() =>
+                    setMaterials(
+                      materials.length === 1
+                        ? [""]
+                        : materials.filter((_, j) => i !== j),
+                    )
+                  }
+                >
+                  <Trash2 size={15} />
+                </Button>
+              </div>
+            ))}
+          </div>
+          <Button
+            type="button"
+            className="text-button"
+            onClick={() => setMaterials([...materials, ""])}
+          >
+            <Plus size={14} /> Add bullet
+          </Button>
+          <label>
+            Review duration (minutes)
+            <NumericInput
+              min={5}
+              max={180}
+
+              value={duration}
+              onChange={setDuration}
+            />
+          </label>
+          {!topic && (
+            <div className="preview">
+              <div>
+                <span className="eyebrow">YOUR FIRST REVIEW</span>
+                <strong>
+                  {manual
+                    ? date(
+                        DateTime.fromISO(manual, {
+                          zone: prefs.timezone,
+                        }).toISO(),
+                        prefs.timezone,
+                      )
+                    : preview
+                      ? date(preview.start, prefs.timezone)
+                      : previewFailed
+                        ? "Schedule preview unavailable"
+                        : "Calculating…"}
+                </strong>
+                <span>
+                  {duration} min ·{" "}
+                  {preview
+                    ? Math.round(preview.retention * 100)
+                    : Math.round(prefs.retention[(importance ?? 3) - 1] * 100)}
+                  % target retention · {manual ? "Manual" : "Automatic"}
+                </span>
+              </div>
+              <label>
+                Change date ({prefs.timezone})
+                <input
+                  type="datetime-local"
+                  value={manual}
+                  onChange={(e) => setManual(e.target.value)}
+                />
+              </label>
+              {!manual && preview?.reason && <p>{preview.reason}</p>}
+            </div>
+          )}
+        </details>
         <div className="form-actions">
           <Button type="button" onClick={onClose}>
             Cancel

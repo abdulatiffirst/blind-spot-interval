@@ -1569,3 +1569,13 @@ summary {
   gap: 8px;
   margin: 10px 0 18px;
 }
+.topic-options {
+  margin-top: 16px;
+}
+.topic-editor .form-actions {
+  position: sticky;
+  bottom: -1px;
+  background: var(--panel);
+  padding-block: 10px;
+  z-index: 1;
+}

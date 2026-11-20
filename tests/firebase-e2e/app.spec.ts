@@ -228,6 +228,7 @@ test("Google credential → onboarding → Logarithms → FSRS review → intern
     .click();
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("textbox", { name: /Topic name/ }).fill("Logarithms");
+  await dialog.getByText("More options", { exact: true }).click();
   await dialog.getByLabel("Initial knowledge").selectOption("3");
   await dialog.getByLabel("Importance").selectOption("5");
   await dialog.getByLabel(/Tags/).fill("Mathematics Exam");
@@ -375,6 +376,7 @@ test("month navigation works from January 1 and failed previews resolve visibly"
     route.fulfill({ status: 503, json: { error: "Unavailable" } }),
   );
   await page.getByRole("button", { name: "Add topic", exact: true }).click();
+  await page.getByText("More options", { exact: true }).click();
   await expect(page.getByText("Schedule preview unavailable")).toBeVisible();
 });
 
