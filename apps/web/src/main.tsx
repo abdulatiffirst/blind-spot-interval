@@ -19,10 +19,8 @@ import {
   CalendarDays,
   Layers3,
   LogOut,
-  Mail,
   Moon,
   RotateCcw,
-  Send,
   Settings2,
   Sun,
 } from "lucide-react";
@@ -40,6 +38,8 @@ import { Button, Dialog, ErrorContext } from "./ui.tsx";
 import { CalendarView } from "./views/Calendar";
 import { TodayView } from "./views/Today";
 import { TopicsView } from "./views/Topics";
+
+import { Landing, ratingLabels } from "./views/Landing";
 
 type Account = { id: string; display_name: string; email: string };
 const sessionTimeoutMs = 20000;
@@ -311,9 +311,8 @@ function App() {
     );
   if (!user)
     return (
-      <div className="landing">
-        <header>
-          <Logo />
+      <Landing
+        theme={
           <Button
             className="icon-button"
             onClick={() => setDark(!dark)}
@@ -321,45 +320,36 @@ function App() {
           >
             {dark ? <Sun /> : <Moon />}
           </Button>
-        </header>
-        <main className="landing-grid">
-          <div>
-            <p className="eyebrow">LESS FORGETTING. MORE BECOMING.</p>
-            <h1>
-              You learned it.
-              <br />
-              Now make it <em>stay.</em>
-            </h1>
-            <p className="intro">
-              A little review, at just the right time. Give your knowledge a
-              place to grow with a schedule that adapts to you.
-            </p>
-            {usesFirebase ? (
-              <Button className="primary" disabled={signingIn} onClick={signIn}>
-                <img
-                  className="google-g"
-                  src="/google-g.png"
-                  width="20"
-                  height="20"
-                  alt=""
-                />
-                {signingIn ? "Opening Google Sign-In…" : "Continue with Google"}
-              </Button>
-            ) : (
-              <a className="button primary" href="/api/v1/auth/google/start">
-                <img
-                  className="google-g"
-                  src="/google-g.png"
-                  width="20"
-                  height="20"
-                  alt=""
-                />
-                Continue with Google
-              </a>
-            )}
-            <p className="fine-print">
-              Your calendar is optional. Your potential isn’t.
-            </p>
+        }
+        cta={
+          usesFirebase ? (
+            <Button className="primary" disabled={signingIn} onClick={signIn}>
+              <img
+                className="google-g"
+                src="/google-g.png"
+                width="20"
+                height="20"
+                alt=""
+              />
+              {signingIn
+                ? "Opening Google Sign-In…"
+                : "Continue with Google and add a topic"}
+            </Button>
+          ) : (
+            <a className="button primary" href="/api/v1/auth/google/start">
+              <img
+                className="google-g"
+                src="/google-g.png"
+                width="20"
+                height="20"
+                alt=""
+              />
+              Continue with Google and add a topic
+            </a>
+          )
+        }
+        feedback={
+          <>
             {error && <p role="alert">{error}</p>}
             {identity && error && (
               <Button
@@ -369,45 +359,9 @@ function App() {
                 Retry loading workspace
               </Button>
             )}
-          </div>
-          <div className="orbit-art" aria-hidden="true">
-            <div className="orbit one" />
-            <div className="orbit two" />
-            <div className="orbit three" />
-            <div className="orbit-center">
-              make
-              <br />
-              it stay
-              <ArrowUpRight aria-hidden="true" />
-            </div>
-            <span className="floating-label">
-              A SMALL HABIT. A LASTING DIFFERENCE.
-            </span>
-          </div>
-        </main>
-        <footer>
-          <small>BLIND SPOT INTERVAL © 2026</small>
-          <address aria-label="Contact">
-            <a
-              href="https://t.me/aabdunazirov"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <Send size={15} aria-hidden="true" />
-              <span>
-                <span className="sr-only">Telegram: </span>@aabdunazirov
-              </span>
-            </a>
-            <a href="mailto:abdulatifabdunazirov@gmail.com">
-              <Mail size={15} aria-hidden="true" />
-              <span>
-                <span className="sr-only">Email: </span>
-                abdulatifabdunazirov@gmail.com
-              </span>
-            </a>
-          </address>
-        </footer>
-      </div>
+          </>
+        }
+      />
     );
   return (
     <ErrorContext.Provider value={error}>
@@ -639,9 +593,7 @@ function App() {
                   setEditor(null);
                   setDetail(null);
                 },
-                editor === "new"
-                  ? "Topic added. Let’s make it stay."
-                  : "Topic updated",
+                editor === "new" ? "Topic added." : "Topic updated",
               )
             }
           />
@@ -755,13 +707,7 @@ function App() {
             </p>
             {review.schedule ? (
               <div className="rating-options">
-                {[
-                  "Forgot completely",
-                  "Mostly forgot",
-                  "Recalled with difficulty",
-                  "Good recall",
-                  "Effortless recall",
-                ].map((label, i) => (
+                {ratingLabels.map((label, i) => (
                   <Button
                     key={label}
                     disabled={busy}

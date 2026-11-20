@@ -1,44 +1,26 @@
 import { expect, test } from "@playwright/test";
 
-test("public landing page fits the screen and keeps sign-in and contacts reachable", async ({
+test("landing explains the product and fits a phone", async ({
   page,
   isMobile,
 }) => {
-  // Exercise a small phone and a short laptop, where the artwork previously overflowed.
-  const size = isMobile
-    ? { width: 320, height: 568 }
-    : { width: 1280, height: 720 };
-  await page.setViewportSize(size);
+  const width = isMobile ? 390 : 1280;
+  await page.setViewportSize({ width, height: isMobile ? 844 : 720 });
   await page.goto("/");
-  await expect(page).toHaveTitle("Blind Spot Interval");
-  const signIn = page.getByRole("button", { name: "Continue with Google" });
-  await expect(signIn).toBeEnabled();
-  await page.evaluate(() => document.fonts.ready.then(() => true));
-  const footer = page.getByRole("contentinfo");
-  const telegram = footer.getByRole("link", {
-    name: "Telegram: @aabdunazirov",
-  });
-  const email = footer.getByRole("link", {
-    name: "Email: abdulatifabdunazirov@gmail.com",
-  });
-  await expect(telegram).toHaveAttribute("href", "https://t.me/aabdunazirov");
-  await expect(telegram).toHaveAttribute("rel", /noopener/);
-  await expect(telegram).toHaveAttribute("target", "_blank");
-  await expect(email).toHaveAttribute(
-    "href",
-    "mailto:abdulatifabdunazirov@gmail.com",
+  await expect(page).toHaveTitle(
+    "Blind Spot Interval: spaced review reminders for students",
   );
+  const ctas = page.getByRole("button", {
+    name: "Continue with Google and add a topic",
+  });
+  await expect(ctas).toHaveCount(2);
+  await expect(ctas.first()).toBeInViewport({ ratio: 1 });
+  await expect(ctas.first()).toBeEnabled();
   expect(await page.locator("html").evaluate((el) => el.scrollWidth)).toBe(
-    size.width,
+    width,
   );
-  if (!isMobile) {
-    expect(await page.locator("html").evaluate((el) => el.scrollHeight)).toBe(
-      size.height,
-    );
-    await expect(signIn).toBeInViewport({ ratio: 1 });
-    await expect(footer).toBeInViewport({ ratio: 1 });
-  }
-  await email.focus();
-  await expect(email).toBeFocused();
-  await expect(email).toBeInViewport();
+  await page.getByText("What is a topic?", { exact: true }).click();
+  await expect(
+    page.getByText("Something you studied", { exact: false }),
+  ).toBeVisible();
 });

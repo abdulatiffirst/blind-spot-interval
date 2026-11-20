@@ -10,7 +10,7 @@ let uid: string;
 async function signIn(page: Page, sub = crypto.randomUUID()) {
   await page.goto("/");
   await expect(
-    page.getByRole("button", { name: "Continue with Google" }),
+    page.getByRole("button", { name: "Continue with Google" }).first(),
   ).toBeVisible();
   const token =
     Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString(
@@ -65,7 +65,9 @@ test("reports failed Google popup initialization and allows a retry", async ({
     if (new URL(request.url()).pathname === "/api/v1/me") meRequests++;
   });
   await page.goto("/");
-  const login = page.getByRole("button", { name: "Continue with Google" });
+  const login = page
+    .getByRole("button", { name: "Continue with Google" })
+    .first();
   const error = page.getByRole("alert");
   const logo = login.locator('img[src="/google-g.png"]');
   await expect(logo).toBeVisible();
@@ -93,10 +95,12 @@ test("allows another sign-in attempt if the Google popup never settles", async (
     route.fulfill({ contentType: "text/javascript", body: "" }),
   );
   await page.goto("/");
-  const login = page.getByRole("button", { name: "Continue with Google" });
+  const login = page
+    .getByRole("button", { name: "Continue with Google" })
+    .first();
   await login.click();
   await expect(
-    page.getByRole("button", { name: "Opening Google Sign-In…" }),
+    page.getByRole("button", { name: "Opening Google Sign-In…" }).first(),
   ).toBeDisabled();
   await page.clock.fastForward(120_000);
   await expect(page.getByRole("alert")).toHaveText(
@@ -170,7 +174,7 @@ test("cancels a pending profile request when Firebase signs out", async ({
       await logout();
     });
     await expect(
-      page.getByRole("button", { name: "Continue with Google" }),
+      page.getByRole("button", { name: "Continue with Google" }).first(),
     ).toBeVisible();
     await aborted;
     await expect(page.getByRole("alert")).toHaveCount(0);
@@ -339,7 +343,9 @@ test("edit, archive, restore, keyboard dismissal and Firebase sign-out", async (
   ).toHaveText("01");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
-  const login = page.getByRole("button", { name: "Continue with Google" });
+  const login = page
+    .getByRole("button", { name: "Continue with Google" })
+    .first();
   await expect(login).toBeVisible();
   await page.reload();
   await expect(login).toBeVisible();

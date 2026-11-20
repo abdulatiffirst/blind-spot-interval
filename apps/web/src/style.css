@@ -168,7 +168,7 @@ small {
 .logo small {
   display: block;
   font-family: Inter, Arial, sans-serif;
-  font-size: 9px;
+  font-size: 12px;
   letter-spacing: 3.2px;
   line-height: 1.3;
   font-weight: 600;
@@ -176,7 +176,7 @@ small {
   margin-top: 3px;
 }
 .workspace-label {
-  font-size: 9px;
+  font-size: 12px;
   letter-spacing: 1.6px;
   font-weight: 600;
   color: var(--muted);
@@ -204,7 +204,7 @@ small {
 }
 .nav-count {
   margin-left: auto;
-  font-size: 11px;
+  font-size: 12px;
   background: #111322;
   color: var(--lime);
   padding: 2px 6px;
@@ -248,7 +248,7 @@ small {
 }
 .account small {
   display: block;
-  font-size: 9px;
+  font-size: 12px;
   color: var(--muted);
   margin-top: 4px;
 }
@@ -298,7 +298,7 @@ small {
   padding: 44px 46px 20px;
 }
 .eyebrow {
-  font-size: 10px;
+  font-size: 12px;
   letter-spacing: 1.6px;
   font-weight: 600;
   color: var(--muted);
@@ -337,7 +337,7 @@ small {
   border: 0;
 }
 .stat-label {
-  font-size: 10px;
+  font-size: 12px;
   letter-spacing: 1.1px;
   color: var(--muted);
   font-weight: 600;
@@ -358,7 +358,7 @@ small {
 }
 .stats small {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 .stats .accent-stat {
   background: #edf1e4;
@@ -385,12 +385,12 @@ small {
   gap: 10px;
 }
 .section-heading > .muted {
-  font-size: 11px;
+  font-size: 12px;
 }
 .badge {
   font-family: Inter, Arial, sans-serif;
   background: var(--soft);
-  font-size: 11px;
+  font-size: 12px;
   border: 1px solid var(--border);
   border-radius: 5px;
   min-width: 24px;
@@ -415,7 +415,7 @@ small {
   border-bottom: 0;
 }
 .row-number {
-  font-size: 11px;
+  font-size: 12px;
   color: #a0a49c;
   width: 18px;
 }
@@ -440,11 +440,11 @@ small {
   overflow-wrap: anywhere;
 }
 .review-row-title > span {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 .overdue {
-  font-size: 9px;
+  font-size: 12px;
   margin-left: 9px;
   color: #80502d;
   background: #fff0dc;
@@ -452,13 +452,13 @@ small {
   padding: 3px 6px;
 }
 .duration {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   margin: 0 12px;
 }
 .review-row .button {
   padding: 8px 12px;
-  font-size: 11px;
+  font-size: 12px;
 }
 .upcoming-heading {
   margin-top: 34px;
@@ -477,7 +477,7 @@ small {
   min-width: 0;
 }
 .upcoming-card .eyebrow {
-  font-size: 9px;
+  font-size: 12px;
   display: block;
 }
 .upcoming-card h3 {
@@ -488,14 +488,14 @@ small {
 .upcoming-card > span:last-child {
   display: flex;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 .content-footer {
   display: flex;
   justify-content: space-between;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 12px;
   letter-spacing: 1px;
   border-top: 1px solid var(--border);
   margin-top: 48px;
@@ -599,7 +599,7 @@ small {
   min-height: 22px;
 }
 .tags span {
-  font-size: 10px;
+  font-size: 12px;
   padding: 4px 8px;
   border-radius: 4px;
   background: var(--soft);
@@ -612,7 +612,7 @@ small {
   display: flex;
   justify-content: space-between;
   gap: 10px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 .banner {
@@ -689,7 +689,7 @@ label {
   margin: 15px 0 7px;
 }
 label .muted {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 400;
   margin-left: 7px;
 }
@@ -750,14 +750,14 @@ input::placeholder {
   background: var(--soft);
   border-radius: 9px;
   margin-top: 22px;
-  font-size: 11px;
+  font-size: 12px;
 }
 .preview strong,
 .preview span {
   display: block;
 }
 .preview .eyebrow {
-  font-size: 9px;
+  font-size: 12px;
   margin-bottom: 10px;
 }
 .preview strong {
@@ -765,7 +765,7 @@ input::placeholder {
   margin-bottom: 6px;
 }
 .preview label {
-  font-size: 10px;
+  font-size: 12px;
   margin-top: 18px;
 }
 .form-actions {
@@ -834,10 +834,10 @@ input::placeholder {
   align-items: center;
   border-bottom: 1px solid var(--border);
   padding: 12px 0;
-  font-size: 11px;
+  font-size: 12px;
 }
 .history-row .button {
-  font-size: 10px;
+  font-size: 12px;
   padding: 6px;
 }
 .settings-card {
@@ -916,7 +916,7 @@ input::placeholder {
 }
 .calendar-toolbar .button {
   text-transform: capitalize;
-  font-size: 11px;
+  font-size: 12px;
   padding: 7px 10px;
 }
 .calendar-toolbar .active {
@@ -942,7 +942,7 @@ input::placeholder {
   min-width: 0;
 }
 .calendar-cell > span {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--muted);
   display: block;
   margin-bottom: 14px;
@@ -973,12 +973,12 @@ input::placeholder {
   overflow-wrap: anywhere;
 }
 .calendar-cell button strong {
-  font-size: 11px;
+  font-size: 12px;
   display: block;
   margin: 6px 0;
 }
 .calendar-cell button small {
-  font-size: 9px;
+  font-size: 12px;
   display: block;
 }
 .calendar-grid.week .calendar-cell {
@@ -1022,21 +1022,6 @@ input::placeholder {
   line-height: 1.04;
   overflow-wrap: break-word;
 }
-.landing h1 em {
-  font-style: normal;
-  position: relative;
-  z-index: 0;
-}
-.landing h1 em:after {
-  content: "";
-  background: var(--lime);
-  position: absolute;
-  bottom: 5px;
-  left: -4px;
-  right: -8px;
-  height: 28%;
-  z-index: -1;
-}
 .landing .intro {
   font-size: 1rem;
   color: var(--text);
@@ -1059,7 +1044,7 @@ input::placeholder {
   flex-wrap: wrap;
 }
 .landing footer small {
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.1em;
 }
@@ -1086,65 +1071,6 @@ input::placeholder {
 .landing footer svg {
   flex: none;
 }
-.orbit-art {
-  width: min(100%, 60vh, 35rem);
-  justify-self: center;
-  aspect-ratio: 1;
-  position: relative;
-  display: grid;
-  place-items: center;
-  container-type: inline-size;
-}
-.orbit {
-  position: absolute;
-  border: 1px solid #b4baa8;
-  border-radius: 50%;
-  width: 95%;
-  height: 65%;
-  transform: rotate(-35deg);
-}
-.orbit.two {
-  transform: rotate(25deg);
-  width: 90%;
-  height: 70%;
-}
-.orbit.three {
-  transform: rotate(85deg);
-  width: 90%;
-  height: 70%;
-}
-.orbit-center {
-  font-family: "Space Grotesk", Arial, sans-serif;
-  background: #111322;
-  color: #ccff4d;
-  border-radius: 50%;
-  width: 65%;
-  height: 65%;
-  display: flex;
-  justify-content: center;
-  flex-direction: column;
-  padding: 12%;
-  font-size: 10.5cqw;
-  line-height: 1;
-  font-weight: 500;
-  letter-spacing: -0.055em;
-  position: relative;
-  box-shadow: 20px 20px 0 #ccff4d;
-}
-.orbit-center svg {
-  position: absolute;
-  right: 20%;
-  top: 18%;
-  width: 6cqw;
-  height: 6cqw;
-}
-.floating-label {
-  position: absolute;
-  bottom: 0;
-  text-align: center;
-  font-size: 0.5625rem;
-  letter-spacing: 1.5px;
-}
 .dark {
   --bg: #151820;
   --panel: #1c202a;
@@ -1154,9 +1080,6 @@ input::placeholder {
   --soft: #272d35;
   background: var(--bg);
   color: var(--text);
-}
-.dark .landing h1 em:after {
-  background: #567320;
 }
 .dark .accent-stat {
   background: #2d3524;
@@ -1209,7 +1132,7 @@ input::placeholder {
     padding: 20px;
   }
   .stats small {
-    font-size: 10px;
+    font-size: 12px;
   }
   .topic-grid {
     grid-template-columns: repeat(2, 1fr);
@@ -1262,7 +1185,7 @@ input::placeholder {
     justify-content: space-around;
   }
   .nav-item {
-    font-size: 10px;
+    font-size: 12px;
     flex-direction: column;
     gap: 4px;
     padding: 7px 13px;
@@ -1284,10 +1207,10 @@ input::placeholder {
   .topbar {
     height: 60px;
     padding: 0 20px;
-    font-size: 11px;
+    font-size: 12px;
   }
   .today-date {
-    font-size: 10px;
+    font-size: 12px;
   }
   .top-actions {
     gap: 9px;
@@ -1305,14 +1228,14 @@ input::placeholder {
     letter-spacing: -1.2px;
   }
   .page-heading .button {
-    font-size: 11px;
+    font-size: 12px;
     padding: 10px;
   }
   .page-heading .button svg {
     width: 14px;
   }
   .eyebrow {
-    font-size: 8px;
+    font-size: 12px;
     letter-spacing: 1.2px;
   }
   .subtitle {
@@ -1337,7 +1260,7 @@ input::placeholder {
     border-right: 0;
   }
   .stat-label {
-    font-size: 8px;
+    font-size: 12px;
     letter-spacing: 0.8px;
   }
   .section-heading h2 {
@@ -1360,13 +1283,13 @@ input::placeholder {
     font-size: 13px;
   }
   .review-row-title > span {
-    font-size: 10px;
+    font-size: 12px;
   }
   .review-row > .duration {
     display: none;
   }
   .review-row .button {
-    font-size: 10px;
+    font-size: 12px;
     padding: 7px 8px;
   }
   .review-row .topic-icon {
@@ -1387,17 +1310,17 @@ input::placeholder {
   }
   .content-footer {
     margin-top: 35px;
-    font-size: 7px;
+    font-size: 12px;
   }
   .topic-grid {
     grid-template-columns: 1fr;
   }
   .filters select {
     max-width: 140px;
-    font-size: 11px;
+    font-size: 12px;
   }
   .filters .inline {
-    font-size: 11px;
+    font-size: 12px;
   }
   .dialog {
     padding: 22px;
@@ -1422,10 +1345,10 @@ input::placeholder {
     overflow-x: auto;
   }
   .calendar-toolbar .button {
-    font-size: 10px;
+    font-size: 12px;
   }
   .connection-card p {
-    font-size: 11px;
+    font-size: 12px;
   }
   .connection-card {
     padding: 17px;
@@ -1440,9 +1363,6 @@ input::placeholder {
   }
   .landing h1 {
     font-size: clamp(2.75rem, 9vw, 4rem);
-  }
-  .orbit-art {
-    width: min(86%, 20rem);
   }
   .landing footer {
     align-items: flex-start;
@@ -1463,7 +1383,7 @@ input::placeholder {
   align-items: center;
   margin: 0 0 25px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 .progress-summary progress {
   accent-color: #7c3aed;
@@ -1565,4 +1485,66 @@ input.numeric-input {
   display: block;
   margin-top: 0.35rem;
   color: var(--text);
+}
+
+.product-example,
+.first-topic {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: clamp(20px, 4vw, 40px);
+}
+.product-example {
+  width: 100%;
+  max-width: 26rem;
+  margin: auto;
+}
+.product-example p {
+  margin: 8px 0 20px;
+}
+.landing-section,
+.tagline {
+  padding-block: clamp(24px, 5vw, 64px);
+  border-top: 1px solid var(--border);
+}
+.landing-section h2 {
+  margin-bottom: 18px;
+}
+.landing-section details {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+summary {
+  cursor: pointer;
+}
+.step-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: 24px;
+  list-style: decimal inside;
+}
+.step-list h3 {
+  display: inline;
+}
+.step-list h3::after {
+  content: "";
+  display: block;
+  margin-bottom: 8px;
+}
+.tagline {
+  font:
+    600 clamp(22px, 3vw, 42px)/1.3 "Space Grotesk",
+    sans-serif;
+}
+.tagline-line {
+  display: block;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .reveal-ready .tagline-line span {
+    opacity: 0.3;
+    transition: opacity 0.25s;
+  }
+  .revealed .tagline-line span {
+    opacity: 1;
+  }
 }
