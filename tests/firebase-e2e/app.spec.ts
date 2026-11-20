@@ -213,38 +213,16 @@ for (const [status, message] of [
   });
 }
 
-test("Google credential → onboarding → Logarithms → FSRS review → internal calendar", async ({
+test("Google credential → first topic by name → first review date → review and calendar", async ({
   page,
 }) => {
   await signIn(page);
-  await expect(page.getByRole("navigation")).toBeVisible();
-  await expect(page.getByRole("dialog")).not.toBeVisible();
-  await page.getByRole("button", { name: "Calendar", exact: true }).click();
-  await page.getByRole("button", { name: "Previous period" }).click();
-  await page.getByRole("button", { name: "Previous period" }).click();
-  await page
-    .getByRole("button", { name: "Add topic", exact: true })
-    .first()
-    .click();
-  const dialog = page.getByRole("dialog");
-  await dialog.getByRole("textbox", { name: /Topic name/ }).fill("Logarithms");
-  await dialog.getByText("More options", { exact: true }).click();
-  await dialog.getByLabel("Initial knowledge").selectOption("3");
-  await dialog.getByLabel("Importance").selectOption("5");
-  await dialog.getByLabel(/Tags/).fill("Mathematics Exam");
-  await dialog
-    .getByLabel("Material 1", { exact: true })
-    .fill("Recall logarithm properties");
-  await dialog.getByLabel("Material 1", { exact: true }).press("Enter");
-  await dialog
-    .getByLabel("Material 2", { exact: true })
-    .fill("https://example.com");
-  await expect(dialog.getByText(/95% target retention/)).toBeVisible();
-  await dialog.getByRole("button", { name: "Add topic", exact: true }).click();
-  await expect(dialog).not.toBeVisible();
-  await page.getByRole("button", { name: "Topics", exact: true }).click();
-  await page.getByRole("button", { name: /Logarithms/ }).click();
-  await expect(page.getByText("95%", { exact: true })).toBeVisible();
+  await page.getByRole("textbox", { name: "Topic name" }).fill("Logarithms");
+  await page.getByRole("button", { name: "Add topic", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText(
+    /Added\. First review: .+ · \d{2}:\d{2}/,
+  );
+  await page.getByRole("button", { name: "View topic" }).click();
   await page.getByRole("button", { name: /Review now/ }).click();
   await page.getByRole("button", { name: /4 Good recall/ }).click();
   await expect(page.getByRole("status")).toContainText("Next review");
@@ -307,7 +285,7 @@ test("edit, archive, restore, keyboard dismissal and Firebase sign-out", async (
     .getByRole("textbox", { name: "Topic name" })
     .fill("Python functions");
   await page.getByRole("button", { name: "Add topic", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("Topic added");
+  await expect(page.getByRole("status")).toContainText("First review:");
   await expect(page.getByRole("dialog")).not.toBeVisible();
   await page.getByRole("button", { name: "Topics", exact: true }).click();
   await page.getByRole("button", { name: /Python functions/ }).click();

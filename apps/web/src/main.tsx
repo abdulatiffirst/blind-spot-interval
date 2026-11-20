@@ -77,6 +77,7 @@ function App() {
     [sort, setSort] = useState("date"),
     [archived, setArchived] = useState(false),
     [dark, setDark] = useState(localStorage.getItem("theme") === "dark");
+  const [createdTopic, setCreatedTopic] = useState<Topic | null>(null);
   const [editor, setEditor] = useState<Topic | "new" | null>(null),
     [detail, setDetail] = useState<Topic | null>(null),
     [review, setReview] = useState<Topic | null>(null),
@@ -125,6 +126,7 @@ function App() {
     setProfile(null);
     setDashboard(emptyDashboard);
     setBusy(false);
+    setCreatedTopic(null);
     setNotice("");
     setShowHoursTip(false);
     setEditor(null);
@@ -273,19 +275,35 @@ function App() {
   async function action(fn: () => Promise<any>, message: string) {
     const signal = session.current;
     setBusy(true);
+    setCreatedTopic(null);
     setNotice("");
     setError("");
     try {
       const result = await fn();
-      if (!result?.signedOut && !signal?.aborted)
-        await refresh(signal ?? undefined);
       if (!signal?.aborted)
         setNotice(typeof result === "string" ? result : message);
+      if (!result?.signedOut && !signal?.aborted)
+        await refresh(signal ?? undefined);
     } catch (e: any) {
       if (!signal?.aborted) setError(e.message);
     } finally {
       if (!signal?.aborted) setBusy(false);
     }
+  }
+  function createTopic(input: Record<string, unknown>) {
+    const signal = session.current;
+    return action(async () => {
+      const topic: Topic = await api("/topics", "POST", input, {
+        signal: signal ?? undefined,
+      });
+      if (signal?.aborted) return;
+      setCreatedTopic(topic);
+      setEditor(null);
+      const at = topic.schedule?.scheduled_at;
+      return at
+        ? `Added. First review: ${date(at, prefs.timezone)}.`
+        : "Added. No review time was available.";
+    }, "Topic added.");
   }
   function signOut() {
     return action(async () => {
@@ -494,7 +512,26 @@ function App() {
             )}
             {notice && (
               <div className="banner success" role="status">
-                {notice}
+                <span>{notice}</span>
+                {createdTopic &&
+                  (createdTopic.schedule?.scheduled_at ? (
+                    <Button onClick={() => openTopic(createdTopic.id)}>
+                      View topic
+                    </Button>
+                  ) : (
+                    <Button
+                      onClick={() =>
+                        createdTopic.schedule
+                          ? setReschedule({
+                              ...createdTopic.schedule,
+                              title: createdTopic.title,
+                            })
+                          : openTopic(createdTopic.id)
+                      }
+                    >
+                      Choose a time
+                    </Button>
+                  ))}
                 <button onClick={() => setNotice("")}>Dismiss</button>
               </div>
             )}
@@ -515,14 +552,7 @@ function App() {
                 hasTopics={dashboard.hasTopics}
                 busy={busy}
                 onCreate={(title) =>
-                  action(
-                    () =>
-                      api("/topics", "POST", {
-                        title,
-                        duration: prefs.duration,
-                      }),
-                    "Topic added.",
-                  )
+                  createTopic({ title, duration: prefs.duration })
                 }
                 today={today}
                 prefs={prefs}
@@ -661,18 +691,13 @@ function App() {
             tags={tags}
             onClose={() => setEditor(null)}
             onSave={(input) =>
-              action(
-                async () => {
-                  await api(
-                    "/topics" + (editor === "new" ? "" : "/" + editor.id),
-                    editor === "new" ? "POST" : "PATCH",
-                    input,
-                  );
-                  setEditor(null);
-                  setDetail(null);
-                },
-                editor === "new" ? "Topic added." : "Topic updated",
-              )
+              editor === "new"
+                ? createTopic(input)
+                : action(async () => {
+                    await api("/topics/" + editor.id, "PATCH", input);
+                    setEditor(null);
+                    setDetail(null);
+                  }, "Topic updated")
             }
           />
         )}
