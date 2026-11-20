@@ -1,7 +1,7 @@
 import { NumericInput } from "./NumericInput";
 import { TagInput } from "./TagInput";
 import { TimezonePicker } from "./TimezonePicker";
-import { addWords, initialZone } from "./form-options";
+import { addWords } from "./form-options";
 import { ArrowRight, Check, GripVertical, Plus, Trash2 } from "lucide-react";
 import { DateTime } from "luxon";
 import { useEffect, useState } from "react";
@@ -379,27 +379,18 @@ export function SettingsForm({
   prefs,
   busy,
   onSave,
-  compact = false,
 }: {
   prefs: Preferences;
   busy: boolean;
   onSave: (p: Preferences) => void;
-  compact?: boolean;
 }) {
   const [p, setP] = useState(prefs);
-  useEffect(
-    () =>
-      setP({
-        ...prefs,
-        timezone: initialZone(prefs.timezone, compact && !prefs.onboarded),
-      }),
-    [prefs, compact],
-  );
+  useEffect(() => setP(prefs), [prefs]);
   const update = (key: keyof Preferences, value: any) =>
     setP({ ...p, [key]: value });
   return (
     <form
-      className={compact ? "" : "settings-card"}
+      className="settings-card"
       onSubmit={(e) => {
         e.preventDefault();
         onSave({ ...p, onboarded: true });
@@ -439,59 +430,55 @@ export function SettingsForm({
           onChange={(number) => update("duration", number)}
         />
       </label>
-      {!compact && (
-        <>
-          <h3>Scheduling flexibility</h3>
-          <div className="form-columns">
-            <label>
-              Days before ideal date
-              <NumericInput
-                min={0}
-                max={7}
-                value={p.daysBefore}
-                onChange={(number) => update("daysBefore", number)}
-              />
-            </label>
-            <label>
-              Days after ideal date
-              <NumericInput
-                min={0}
-                max={14}
-                value={p.daysAfter}
-                onChange={(number) => update("daysAfter", number)}
-              />
-            </label>
-          </div>
-          <details>
-            <summary>Advanced memory preferences</summary>
-            <p className="muted">
-              Higher retention means more frequent reviews. Changes apply to
-              future review calculations.
-            </p>
-            {p.retention.map((value, i) => (
-              <label key={i}>
-                Importance {i + 1} retention (%)
-                <NumericInput
-                  min={80}
-                  max={97}
-                  decimal
-                  value={Number((value * 100).toPrecision(15))}
-                  onChange={(number) =>
-                    update(
-                      "retention",
-                      p.retention.map((v, j) => (i === j ? number / 100 : v)),
-                    )
-                  }
-                />
-              </label>
-            ))}
-          </details>
-        </>
-      )}
+
+      <h3>Scheduling flexibility</h3>
+      <div className="form-columns">
+        <label>
+          Days before ideal date
+          <NumericInput
+            min={0}
+            max={7}
+            value={p.daysBefore}
+            onChange={(number) => update("daysBefore", number)}
+          />
+        </label>
+        <label>
+          Days after ideal date
+          <NumericInput
+            min={0}
+            max={14}
+            value={p.daysAfter}
+            onChange={(number) => update("daysAfter", number)}
+          />
+        </label>
+      </div>
+      <details>
+        <summary>Advanced memory preferences</summary>
+        <p className="muted">
+          Higher retention means more frequent reviews. Changes apply to future
+          review calculations.
+        </p>
+        {p.retention.map((value, i) => (
+          <label key={i}>
+            Importance {i + 1} retention (%)
+            <NumericInput
+              min={80}
+              max={97}
+              decimal
+              value={Number((value * 100).toPrecision(15))}
+              onChange={(number) =>
+                update(
+                  "retention",
+                  p.retention.map((v, j) => (i === j ? number / 100 : v)),
+                )
+              }
+            />
+          </label>
+        ))}
+      </details>
       <div className="form-actions">
         <Button className="primary" disabled={busy}>
-          {busy ? "Saving…" : compact ? "Let’s begin" : "Save preferences"}{" "}
-          <Check size={16} />
+          {busy ? "Saving…" : "Save preferences"} <Check size={16} />
         </Button>
       </div>
     </form>

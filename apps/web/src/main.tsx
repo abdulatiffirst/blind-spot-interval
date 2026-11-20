@@ -30,6 +30,7 @@ import { createRoot } from "react-dom/client";
 import { defaults } from "../../../packages/shared/src/index.ts";
 import { api, setCsrf, loadTopics } from "./api";
 import { Logo, Materials } from "./components";
+import { initialZone } from "./form-options";
 import { date } from "./date";
 import { Reschedule, SettingsForm, TopicEditor } from "./forms";
 import "./style.css";
@@ -124,6 +125,7 @@ function App() {
     setDashboard(emptyDashboard);
     setBusy(false);
     setNotice("");
+    setShowHoursTip(false);
     setEditor(null);
     setDetail(null);
     setReview(null);
@@ -148,10 +150,28 @@ function App() {
       setLoading(false);
     }, sessionTimeoutMs);
     api("/me", "GET", undefined, { user: identity ?? undefined, signal })
-      .then((me) => {
+      .then(async (me) => {
         if (signal.aborted) return;
         if (!me.user) throw new Error("Workspace profile is missing");
         setCsrf(me.csrf);
+        const options = { user: identity ?? undefined, signal };
+        const saved = await api("/preferences", "GET", undefined, options);
+        const tipKey = "study-hours-tip:" + me.user.id;
+        if (!saved.onboarded) {
+          await api(
+            "/preferences",
+            "PATCH",
+            {
+              ...saved,
+              timezone: initialZone(saved.timezone, true),
+              onboarded: true,
+            },
+            options,
+          );
+          if (!signal.aborted) localStorage.setItem(tipKey, "waiting");
+        }
+        if (signal.aborted) return;
+        setShowHoursTip(localStorage.getItem(tipKey) === "visible");
         setProfile({ identity, user: me.user });
       })
       .catch((e) => {
@@ -174,6 +194,7 @@ function App() {
     };
   }, [identity, sessionAttempt]);
 
+  const [showHoursTip, setShowHoursTip] = useState(false);
   const latestRefresh = useRef(0);
   const refresh = useCallback(
     async (signal?: AbortSignal) => {
@@ -437,6 +458,25 @@ function App() {
               <div className="banner error" role="alert">
                 {error}
                 <button onClick={() => setError("")}>Dismiss</button>
+              </div>
+            )}
+            {showHoursTip && (
+              <div className="banner">
+                <span>
+                  Want reviews at different times? Change your study hours in{" "}
+                  <button onClick={() => setSection("Settings")}>
+                    Settings
+                  </button>
+                  .
+                </span>
+                <button
+                  onClick={() => {
+                    localStorage.removeItem("study-hours-tip:" + user.id);
+                    setShowHoursTip(false);
+                  }}
+                >
+                  Dismiss
+                </button>
               </div>
             )}
             {notice && (
@@ -718,6 +758,14 @@ function App() {
                           "POST",
                           { rating: i + 1 },
                         );
+                        const tipKey = "study-hours-tip:" + user.id;
+                        if (
+                          !session.current?.aborted &&
+                          localStorage.getItem(tipKey) === "waiting"
+                        ) {
+                          localStorage.setItem(tipKey, "visible");
+                          setShowHoursTip(true);
+                        }
                         setReview(null);
                         if (r.next?.scheduled_at)
                           setAnchor(
@@ -833,25 +881,6 @@ function App() {
               Confirm{" "}
               {confirmArchive.status === "archived" ? "restore" : "archive"}
             </Button>
-          </Dialog>
-        )}
-        {dashboard !== emptyDashboard && !prefs.onboarded && (
-          <Dialog
-            title="Find your learning rhythm."
-            description="A few preferences, then you’re ready. Google Calendar is optional."
-            onClose={() => {}}
-          >
-            <SettingsForm
-              prefs={prefs}
-              busy={busy}
-              compact
-              onSave={(p) =>
-                action(
-                  () => api("/preferences", "PATCH", { ...p, onboarded: true }),
-                  "You’re ready. Add your first topic.",
-                )
-              }
-            />
           </Dialog>
         )}
       </div>

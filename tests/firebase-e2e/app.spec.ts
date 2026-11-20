@@ -109,6 +109,8 @@ test("allows another sign-in attempt if the Google popup never settles", async (
   await expect(login).toBeEnabled();
 });
 
+test.use({ timezoneId: "Asia/Tashkent" });
+
 test("loads the workspace with a Firebase token and restores it on reload", async ({
   page,
 }) => {
@@ -122,8 +124,12 @@ test("loads the workspace with a Firebase token and restores it on reload", asyn
   const onboarding = page.getByRole("dialog", {
     name: "Find your learning rhythm.",
   });
-  await expect(onboarding).toBeVisible({ timeout: 40000 });
-  await page.getByRole("button", { name: /Let’s begin/ }).click();
+  await expect(page.getByRole("navigation")).toBeVisible();
+  const saved = (await db.doc(`users/${uid}/preferences/default`).get()).data();
+  expect(saved?.timezone).toBe(
+    await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone),
+  );
+  expect(saved?.onboarded).toBe(true);
   await expect(onboarding).not.toBeVisible();
   await page.getByRole("button", { name: "Topics", exact: true }).click();
   const topicsUpdated = page.waitForResponse((response) => {
@@ -203,9 +209,7 @@ for (const [status, message] of [
     await expect(page.getByRole("alert")).toHaveText(message);
     await expect(page.getByRole("navigation")).toHaveCount(0);
     await page.getByRole("button", { name: "Retry loading workspace" }).click();
-    await expect(
-      page.getByRole("dialog", { name: "Find your learning rhythm." }),
-    ).toBeVisible();
+    await expect(page.getByRole("navigation")).toBeVisible();
   });
 }
 
@@ -213,10 +217,7 @@ test("Google credential → onboarding → Logarithms → FSRS review → intern
   page,
 }) => {
   await signIn(page);
-  await expect(
-    page.getByRole("dialog", { name: "Find your learning rhythm." }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: /Let’s begin/ }).click();
+  await expect(page.getByRole("navigation")).toBeVisible();
   await expect(page.getByRole("dialog")).not.toBeVisible();
   await page.getByRole("button", { name: "Calendar", exact: true }).click();
   await page.getByRole("button", { name: "Previous period" }).click();
@@ -301,7 +302,6 @@ test("edit, archive, restore, keyboard dismissal and Firebase sign-out", async (
 }) => {
   const account = crypto.randomUUID();
   await signIn(page, account);
-  await page.getByRole("button", { name: /Let’s begin/ }).click();
   await page
     .getByRole("button", { name: "Add topic", exact: true })
     .first()
@@ -361,7 +361,6 @@ test("month navigation works from January 1 and failed previews resolve visibly"
   page,
 }) => {
   await signIn(page);
-  await page.getByRole("button", { name: /Let’s begin/ }).click();
   await expect(page.getByRole("dialog")).not.toBeVisible();
   await page.getByRole("button", { name: "Calendar", exact: true }).click();
   await page.clock.setFixedTime(new Date("2027-01-01T12:00:00Z"));
@@ -389,15 +388,14 @@ test("numeric fields support direct editing, validation and fractional retention
   page,
 }) => {
   await signIn(page);
-  const setup = page.getByRole("dialog", {
-    name: "Find your learning rhythm.",
-  });
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const setup = page.locator("form.settings-card");
   const minutes = setup.getByRole("textbox", { name: /Default duration/ });
   await expect(minutes).toBeVisible({ timeout: 40000 });
   await expect(minutes).toHaveAttribute("inputmode", "numeric");
   await minutes.fill("");
   await expect(minutes).toHaveValue("");
-  const submit = setup.getByRole("button", { name: /Let’s begin/ });
+  const submit = setup.getByRole("button", { name: "Save preferences" });
   for (const invalid of ["", "4", "181", "8.5", "abc"]) {
     await minutes.fill(invalid);
     await submit.click();
@@ -414,7 +412,7 @@ test("numeric fields support direct editing, validation and fractional retention
   await expect(minutes).toHaveValue("5");
   await minutes.fill("180");
   await submit.click();
-  await expect(setup).not.toBeVisible();
+  await expect(page.getByRole("status")).toContainText("Preferences saved");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(page.getByLabel(/Default duration/)).toHaveValue("180");
   await page.getByText("Advanced memory preferences", { exact: true }).click();
