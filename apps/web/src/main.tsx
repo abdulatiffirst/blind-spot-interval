@@ -45,6 +45,7 @@ import { Landing, ratingLabels } from "./views/Landing";
 type Account = { id: string; display_name: string; email: string };
 const sessionTimeoutMs = 20000;
 const emptyDashboard = {
+  hasTopics: false,
   topics: [] as Topic[],
   reviews: [] as Review[],
   prefs: defaults,
@@ -207,7 +208,17 @@ function App() {
         api("/reviews/progress", "GET", undefined, { signal }),
       ]);
       if (signal?.aborted || sequence !== latestRefresh.current) return;
+      const hasTopics =
+        ts.total > 0 ||
+        reviews.length > 0 ||
+        (
+          await api("/topics?limit=1&archived=" + !archived, "GET", undefined, {
+            signal,
+          })
+        ).total > 0;
+      if (signal?.aborted || sequence !== latestRefresh.current) return;
       setDashboard({
+        hasTopics,
         topics: ts.items,
         reviews,
         prefs,
@@ -411,14 +422,16 @@ function App() {
             ))}
           </nav>
           <div className="sidebar-bottom">
-            <div className="sidebar-note">
-              <span className="tiny-star">✳</span>
-              <p>
-                Little by little.
-                <br />
-                <strong>It adds up.</strong>
-              </p>
-            </div>
+            {dashboard.hasTopics && (
+              <div className="sidebar-note">
+                <span className="tiny-star">✳</span>
+                <p>
+                  Little by little.
+                  <br />
+                  <strong>It adds up.</strong>
+                </p>
+              </div>
+            )}
             <div className="account">
               <div className="avatar">{user.display_name[0]}</div>
               <div>
@@ -485,9 +498,32 @@ function App() {
                 <button onClick={() => setNotice("")}>Dismiss</button>
               </div>
             )}
-            {section === "Today" && (
+            {dashboard === emptyDashboard && (
+              <div className="workspace-skeleton" role="status">
+                {error ? (
+                  <Button onClick={() => setSessionAttempt((n) => n + 1)}>
+                    Retry loading workspace
+                  </Button>
+                ) : (
+                  "Loading topics…"
+                )}
+              </div>
+            )}
+            {dashboard !== emptyDashboard && section === "Today" && (
               <TodayView
                 reviews={reviews}
+                hasTopics={dashboard.hasTopics}
+                busy={busy}
+                onCreate={(title) =>
+                  action(
+                    () =>
+                      api("/topics", "POST", {
+                        title,
+                        duration: prefs.duration,
+                      }),
+                    "Topic added.",
+                  )
+                }
                 today={today}
                 prefs={prefs}
                 progress={progress}
@@ -496,7 +532,7 @@ function App() {
                 setSection={setSection}
               />
             )}
-            {section === "Topics" && (
+            {dashboard !== emptyDashboard && section === "Topics" && (
               <TopicsView
                 filtered={filtered}
                 tags={tags}
@@ -513,7 +549,7 @@ function App() {
                 prefs={prefs}
               />
             )}
-            {section === "Calendar" && (
+            {dashboard !== emptyDashboard && section === "Calendar" && (
               <CalendarView
                 onError={setError}
                 prefs={prefs}
@@ -531,7 +567,7 @@ function App() {
                 setReschedule={setReschedule}
               />
             )}
-            {section === "Settings" && (
+            {dashboard !== emptyDashboard && section === "Settings" && (
               <>
                 <div className="page-heading">
                   <div>
@@ -607,12 +643,14 @@ function App() {
                 </div>
               </>
             )}
-            <footer className="content-footer">
-              <span>GOOD THINGS TAKE REPETITION.</span>
-              <span className="inline">
-                Blind Spot Interval <ArrowUpRight size={10} />
-              </span>
-            </footer>
+            {dashboard.hasTopics && (
+              <footer className="content-footer">
+                <span>GOOD THINGS TAKE REPETITION.</span>
+                <span className="inline">
+                  Blind Spot Interval <ArrowUpRight size={10} />
+                </span>
+              </footer>
+            )}
           </main>
         </div>
         {editor && (

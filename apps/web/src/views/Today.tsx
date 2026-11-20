@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ArrowUpRight, ArrowRight, Layers3, Plus } from "lucide-react";
 import type { Preferences } from "../../../../packages/shared/src/index";
 import { Empty, ReviewRow } from "../components";
@@ -5,6 +6,9 @@ import { date } from "../date";
 import type { Review } from "../types";
 import { Button } from "../ui";
 export function TodayView({
+  hasTopics,
+  busy,
+  onCreate,
   reviews,
   today,
   prefs,
@@ -13,6 +17,9 @@ export function TodayView({
   setEditor,
   setSection,
 }: {
+  hasTopics: boolean;
+  busy: boolean;
+  onCreate: (title: string) => void;
   reviews: Review[];
   today: Review[];
   prefs: Preferences;
@@ -21,6 +28,48 @@ export function TodayView({
   setEditor: (topic: "new") => void;
   setSection: (section: string) => void;
 }) {
+  const [title, setTitle] = useState("");
+  if (!hasTopics)
+    return (
+      <form
+        className="first-topic"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (title.trim() && !busy) onCreate(title.trim());
+        }}
+      >
+        <h1>
+          <label htmlFor="first-topic">What did you learn recently?</label>
+        </h1>
+        <p id="first-topic-help">
+          We will schedule your first review automatically.
+        </p>
+        <input
+          id="first-topic"
+          aria-label="Topic name"
+          aria-describedby="first-topic-help"
+          maxLength={200}
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="For example: Chain rule"
+          required
+        />
+        <div className="example-chips">
+          {["Chain rule", "Past perfect"].map((example) => (
+            <Button
+              type="button"
+              key={example}
+              onClick={() => setTitle(example)}
+            >
+              {example}
+            </Button>
+          ))}
+        </div>
+        <Button className="primary" disabled={busy || !title.trim()}>
+          {busy ? "Saving…" : "Add topic"}
+        </Button>
+      </form>
+    );
   return (
     <>
       <div className="page-heading">

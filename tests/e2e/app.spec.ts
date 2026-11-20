@@ -33,8 +33,9 @@ test("create, edit, review, archive and restore a real topic", async ({
 }) => {
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: /Make room for/ }),
+    page.getByRole("heading", { name: /What did you learn/ }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Calendar", exact: true }).click();
   await page
     .getByRole("button", { name: "Add topic", exact: true })
     .first()

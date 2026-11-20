@@ -303,16 +303,10 @@ test("edit, archive, restore, keyboard dismissal and Firebase sign-out", async (
   const account = crypto.randomUUID();
   await signIn(page, account);
   await page
-    .getByRole("button", { name: "Add topic", exact: true })
-    .first()
-    .click();
-  await page
-    .getByRole("textbox", { name: /Topic name/ })
+    .getByRole("textbox", { name: "Topic name" })
     .fill("Python functions");
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "Add topic", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Add topic", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("Topic added");
   await expect(page.getByRole("dialog")).not.toBeVisible();
   await page.getByRole("button", { name: "Topics", exact: true }).click();
   await page.getByRole("button", { name: /Python functions/ }).click();

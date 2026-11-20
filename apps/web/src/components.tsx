@@ -52,6 +52,9 @@ export function ReviewRow({
   zone: string;
   onOpen: () => void;
 }) {
+  const minutesUntil = r.scheduled_at
+    ? Math.floor((Date.parse(r.scheduled_at) - Date.now()) / 60000)
+    : null;
   return (
     <div className="review-row">
       <span className="row-number">{String(index + 1).padStart(2, "0")}</span>
@@ -62,8 +65,14 @@ export function ReviewRow({
         <h3>{r.title}</h3>
         <span>
           {date(r.scheduled_at, zone)}{" "}
-          {r.scheduled_at && Date.parse(r.scheduled_at) < Date.now() && (
-            <b className="overdue">Due</b>
+          {minutesUntil !== null && (
+            <b className={minutesUntil < 0 ? "overdue" : ""}>
+              {minutesUntil < 0
+                ? "Overdue"
+                : minutesUntil === 0
+                  ? "Due now"
+                  : "Later today"}
+            </b>
           )}
         </span>
       </div>

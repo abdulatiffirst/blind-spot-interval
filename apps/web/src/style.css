@@ -1548,3 +1548,24 @@ summary {
     opacity: 1;
   }
 }
+.workspace-skeleton {
+  background: var(--soft);
+  border-radius: 12px;
+  padding: 30px;
+}
+.first-topic {
+  max-width: 600px;
+  margin: 0 auto;
+}
+.first-topic h1 label {
+  font: inherit;
+  margin: 0;
+}
+.first-topic p {
+  margin: 12px 0;
+}
+.example-chips {
+  display: flex;
+  gap: 8px;
+  margin: 10px 0 18px;
+}
