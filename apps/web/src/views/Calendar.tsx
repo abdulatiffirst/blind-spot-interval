@@ -34,8 +34,7 @@ export function CalendarView({
     <>
       <div className="page-heading">
         <div>
-          <p className="eyebrow">FIND YOUR RHYTHM</p>
-          <h1>A little time to remember.</h1>
+          <h1>Calendar</h1>
           <p className="subtitle">Your review schedule · {prefs.timezone}</p>
         </div>
         <Button className="primary" onClick={() => setEditor("new")}>
@@ -56,7 +55,7 @@ export function CalendarView({
             {calendar.error ??
               (calendar.connected
                 ? "Reviews sync automatically. External availability uses your primary calendar."
-                : "Connect Google to account for your primary calendar’s busy times.")}
+                : "Connect Google Calendar to schedule around busy times.")}
           </p>
         </div>
         {!calendar.connected && (
@@ -68,7 +67,7 @@ export function CalendarView({
               connectCalendar().catch((e) => onError(e.message));
             }}
           >
-            <Link2 size={16} /> Connect Google
+            <Link2 size={16} /> Connect Google Calendar
           </a>
         )}
       </div>
@@ -159,6 +158,7 @@ export function CalendarView({
                     {r.duration}m
                   </small>
                   <strong>{r.title}</strong>
+                  <span>Change time</span>
                   <small>
                     {r.mode === "manual" ? "Manual override" : "Automatic"}
                   </small>

@@ -125,6 +125,7 @@ function App() {
     if (usesFirebase && identity === undefined) return;
     setProfile(null);
     setDashboard(emptyDashboard);
+    setSection(new URLSearchParams(location.search).get("section") ?? "Today");
     setBusy(false);
     setCreatedTopic(null);
     setNotice("");
@@ -280,10 +281,13 @@ function App() {
     setError("");
     try {
       const result = await fn();
-      if (!signal?.aborted)
-        setNotice(typeof result === "string" ? result : message);
-      if (!result?.signedOut && !signal?.aborted)
-        await refresh(signal ?? undefined);
+      try {
+        if (!result?.signedOut && !signal?.aborted)
+          await refresh(signal ?? undefined);
+      } finally {
+        if (!signal?.aborted)
+          setNotice(typeof result === "string" ? result : message);
+      }
     } catch (e: any) {
       if (!signal?.aborted) setError(e.message);
     } finally {
@@ -356,7 +360,7 @@ function App() {
           height="38"
           alt=""
         />
-        <p role="status">Finding your rhythm…</p>
+        <p role="status">Loading your workspace…</p>
       </div>
     );
   if (!user)
@@ -418,7 +422,7 @@ function App() {
       <div className="shell">
         <aside>
           <Logo />
-          <div className="workspace-label">YOUR LEARNING SPACE</div>
+          <div className="workspace-label">Your workspace</div>
           <nav>
             {[
               ["Today", Sun],
@@ -440,16 +444,6 @@ function App() {
             ))}
           </nav>
           <div className="sidebar-bottom">
-            {dashboard.hasTopics && (
-              <div className="sidebar-note">
-                <span className="tiny-star">✳</span>
-                <p>
-                  Little by little.
-                  <br />
-                  <strong>It adds up.</strong>
-                </p>
-              </div>
-            )}
             <div className="account">
               <div className="avatar">{user.display_name[0]}</div>
               <div>
@@ -495,9 +489,15 @@ function App() {
               <div className="banner">
                 <span>
                   Want reviews at different times? Change your study hours in{" "}
-                  <button onClick={() => setSection("Settings")}>
+                  <a
+                    href="?section=Settings"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setSection("Settings");
+                    }}
+                  >
                     Settings
-                  </button>
+                  </a>
                   .
                 </span>
                 <button
@@ -601,9 +601,7 @@ function App() {
               <>
                 <div className="page-heading">
                   <div>
-                    <p className="eyebrow">MAKE IT YOURS</p>
-                    <h1>Your pace. Your preferences.</h1>
-                    <p className="subtitle">A schedule that fits your life.</p>
+                    <h1>Settings</h1>
                   </div>
                 </div>
                 <SettingsForm
@@ -673,14 +671,6 @@ function App() {
                 </div>
               </>
             )}
-            {dashboard.hasTopics && (
-              <footer className="content-footer">
-                <span>GOOD THINGS TAKE REPETITION.</span>
-                <span className="inline">
-                  Blind Spot Interval <ArrowUpRight size={10} />
-                </span>
-              </footer>
-            )}
           </main>
         </div>
         {editor && (
@@ -702,24 +692,24 @@ function App() {
           />
         )}
         {detail && (
-          <Dialog title={detail.title} onClose={() => setDetail(null)}>
+          <Dialog
+            description="Topic details"
+            title={detail.title}
+            onClose={() => setDetail(null)}
+          >
             <div className="tags">
               {detail.tags.map((t) => (
                 <span key={t}>{t}</span>
               ))}
             </div>
             <dl className="detail-grid">
-              <dt>Target retention</dt>
+              <dt>How well you want to remember it</dt>
               <dd>{Math.round(detail.target_retention * 100)}%</dd>
-              <dt>Initial knowledge</dt>
+              <dt>How well do you know this now?</dt>
               <dd>{detail.initial_knowledge ?? "Not set"}</dd>
               <dt>Importance</dt>
               <dd>{detail.importance ?? "Not set"}</dd>
-              <dt>Ideal review</dt>
-              <dd>
-                {date(detail.schedule?.ideal_due_at ?? null, prefs.timezone)}
-              </dd>
-              <dt>Scheduled review</dt>
+              <dt>Next review</dt>
               <dd>
                 {date(detail.schedule?.scheduled_at ?? null, prefs.timezone)}
               </dd>
@@ -791,23 +781,24 @@ function App() {
                 </div>
               ))
             ) : (
-              <p className="muted">
-                No reviews yet. Your initial knowledge is a starting estimate.
-              </p>
+              <p className="muted">No reviews yet.</p>
             )}
           </Dialog>
         )}
         {review && (
           <Dialog
             title={review.title}
-            description="Recall first. Then check your notes."
+            description="Try to explain this from memory."
             onClose={() => setReview(null)}
           >
-            <Materials items={review.materials} />
+            {review.materials.length > 0 && (
+              <details>
+                <summary>Show notes</summary>
+                <Materials items={review.materials} />
+              </details>
+            )}
             <h3>How well did you remember this topic?</h3>
-            <p className="muted">
-              Rate what you recalled or applied before consulting notes.
-            </p>
+            <p className="muted">Choosing a rating saves your review.</p>
             {review.schedule ? (
               <div className="rating-options">
                 {ratingLabels.map((label, i) => (
@@ -816,16 +807,15 @@ function App() {
                     disabled={busy}
                     onClick={() =>
                       action(async () => {
+                        const signal = session.current;
                         const r = await api(
                           "/reviews/" + review.schedule!.id + "/complete",
                           "POST",
                           { rating: i + 1 },
                         );
+                        if (signal?.aborted) return;
                         const tipKey = "study-hours-tip:" + user.id;
-                        if (
-                          !session.current?.aborted &&
-                          localStorage.getItem(tipKey) === "waiting"
-                        ) {
+                        if (localStorage.getItem(tipKey) === "waiting") {
                           localStorage.setItem(tipKey, "visible");
                           setShowHoursTip(true);
                         }
@@ -920,8 +910,8 @@ function App() {
           >
             <p>
               {confirmArchive.status === "archived"
-                ? "We’ll schedule a new review using its existing memory state."
-                : "Upcoming reviews will be cancelled and external events queued for removal."}
+                ? "This topic will appear in reviews again."
+                : "This topic stops appearing in reviews. You can restore it later."}
             </p>
             <Button
               className="primary"

@@ -1,4 +1,4 @@
-import { ArrowUpRight, Layers3, Plus } from "lucide-react";
+import { ArrowUpRight, Layers3 } from "lucide-react";
 import { safeUrl } from "../../../packages/shared/src/index";
 import { date } from "./date";
 import type { Review } from "./types";
@@ -16,28 +16,6 @@ export function Logo() {
       <span>
         blind spot<small>INTERVAL</small>
       </span>
-    </div>
-  );
-}
-export function Empty({
-  title,
-  text,
-  onAdd,
-}: {
-  title: string;
-  text: string;
-  onAdd: () => void;
-}) {
-  return (
-    <div className="empty">
-      <div className="empty-icon">
-        <Layers3 size={28} />
-      </div>
-      <h3>{title}</h3>
-      <p>{text}</p>
-      <Button onClick={onAdd}>
-        Add your first topic <Plus size={16} />
-      </Button>
     </div>
   );
 }

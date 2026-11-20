@@ -43,7 +43,9 @@ test("create, edit, review, archive and restore a real topic", async ({
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("textbox", { name: /Topic name/ }).fill("Logarithms");
   await dialog.getByText("More options", { exact: true }).click();
-  await expect(dialog.getByLabel("Initial knowledge")).toHaveValue("");
+  await expect(dialog.getByLabel("How well do you know this now?")).toHaveValue(
+    "",
+  );
   const input = dialog.getByRole("combobox", { name: "Tags", exact: true });
   await input.fill("Math");
   await input.press("Space");

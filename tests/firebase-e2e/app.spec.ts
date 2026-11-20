@@ -226,6 +226,12 @@ test("Google credential → first topic by name → first review date → review
   await page.getByRole("button", { name: /Review now/ }).click();
   await page.getByRole("button", { name: /4 Good recall/ }).click();
   await expect(page.getByRole("status")).toContainText("Next review");
+  const tip = page
+    .locator(".banner")
+    .filter({ hasText: "Want reviews at different times?" });
+  await expect(tip.getByRole("link", { name: "Settings" })).toBeVisible();
+  await tip.getByRole("button", { name: "Dismiss" }).click();
+  await expect(tip).toHaveCount(0);
   await page.getByRole("button", { name: "Calendar", exact: true }).click();
   await expect(page.getByText("Your internal calendar is ready")).toBeVisible();
   const pending = await db
@@ -311,7 +317,7 @@ test("edit, archive, restore, keyboard dismissal and Firebase sign-out", async (
   await expect(
     page
       .locator(".stats > div")
-      .filter({ hasText: "ACTIVE TOPICS" })
+      .filter({ hasText: "Active topics" })
       .locator("strong"),
   ).toHaveText("01");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
@@ -402,4 +408,42 @@ test("numeric fields support direct editing, validation and fractional retention
         ).get("retention")[0],
     )
     .toBeCloseTo(0.855, 8);
+});
+
+test("optional topic details and manual date on a short viewport", async ({
+  page,
+}) => {
+  await signIn(page);
+  await page.getByRole("button", { name: "Topics", exact: true }).click();
+  await page.getByRole("button", { name: "Add topic", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  const name = dialog.getByRole("textbox", { name: /Topic name/ });
+  await expect(name).toBeFocused();
+  await name.fill("Chain rule");
+  await page.setViewportSize({ width: 390, height: 390 });
+  const submit = dialog.getByRole("button", { name: "Add topic", exact: true });
+  await expect(submit).toBeInViewport({ ratio: 1 });
+  await dialog.getByText("More options", { exact: true }).click();
+  await dialog.getByLabel("How well do you know this now?").selectOption("3");
+  await dialog.getByLabel("Importance").selectOption("5");
+  await dialog
+    .getByLabel("Material 1", { exact: true })
+    .fill("Differentiate the outer function first.");
+  await dialog.getByLabel(/Change date/).fill("2031-04-10T18:25");
+  await expect(dialog.locator(".preview strong")).toContainText(
+    "10 Apr · 18:25",
+  );
+  await expect(dialog.locator(".preview")).toContainText("95% recall goal");
+  await expect(submit).toBeInViewport({ ratio: 1 });
+  await submit.click();
+  await expect(page.getByRole("status")).toContainText("10 Apr · 18:25");
+  await page.getByRole("button", { name: "View topic" }).click();
+  await page.getByRole("button", { name: "Review now" }).click();
+  await expect(
+    dialog.getByText("Differentiate the outer function first."),
+  ).toBeHidden();
+  await dialog.getByText("Show notes", { exact: true }).click();
+  await expect(
+    dialog.getByText("Differentiate the outer function first."),
+  ).toBeVisible();
 });

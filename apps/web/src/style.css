@@ -7,7 +7,7 @@
   --bg: #f9faf7;
   --panel: #fff;
   --text: #111322;
-  --muted: #777b78;
+  --muted: #626863;
   --border: #e5e7e1;
   --soft: #f1f3ed;
   --lime: #ccff4d;
@@ -1578,4 +1578,26 @@ summary {
   background: var(--panel);
   padding-block: 10px;
   z-index: 1;
+}
+
+.workspace-skeleton::after {
+  content: "";
+  display: block;
+  width: min(100%, 24rem);
+  height: 44px;
+  border-radius: 8px;
+  margin-top: 14px;
+  background: var(--border);
+}
+@media (max-width: 760px) and (max-height: 530px) {
+  .first-topic {
+    padding: 14px;
+  }
+  .first-topic h1 {
+    font-size: 22px;
+  }
+  .first-topic .primary {
+    position: sticky;
+    bottom: 65px;
+  }
 }

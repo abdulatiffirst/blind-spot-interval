@@ -1,6 +1,5 @@
 import { ArrowUpRight, Layers3, Plus, Search } from "lucide-react";
 import type { Preferences } from "../../../../packages/shared/src/index";
-import { Empty } from "../components";
 import { date } from "../date";
 import type { Topic } from "../types";
 import { Button } from "../ui";
@@ -37,9 +36,7 @@ export function TopicsView({
     <>
       <div className="page-heading">
         <div>
-          <p className="eyebrow">YOUR GROWING COLLECTION</p>
-          <h1>Small ideas. Lasting knowledge.</h1>
-          <p className="subtitle">Everything you’re learning, in one place.</p>
+          <h1>Topics</h1>
         </div>
         <Button className="primary" onClick={() => setEditor("new")}>
           <Plus size={18} /> Add topic
@@ -117,11 +114,27 @@ export function TopicsView({
           ))}
         </div>
       ) : (
-        <Empty
-          title="A place for your next discovery."
-          text="Start with a topic, a skill, or a question you want to remember."
-          onAdd={() => setEditor("new")}
-        />
+        <div className="empty">
+          <h2>
+            {query || tag
+              ? "No matching topics"
+              : archived
+                ? "No archived topics"
+                : "No topics yet"}
+          </h2>
+          {query || tag ? (
+            <Button
+              onClick={() => {
+                setQuery("");
+                setTag("");
+              }}
+            >
+              Clear filters
+            </Button>
+          ) : (
+            !archived && <p>Add a topic you studied to schedule a review.</p>
+          )}
+        </div>
       )}
     </>
   );

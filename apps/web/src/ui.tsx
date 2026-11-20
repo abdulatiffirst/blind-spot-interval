@@ -24,7 +24,7 @@ export function Dialog({
   onClose,
 }: {
   title: string;
-  description?: string;
+  description: string;
   children: ReactNode;
   onClose: () => void;
 }) {
@@ -56,7 +56,7 @@ export function Dialog({
             <div>
               <DialogPrimitive.Title>{title}</DialogPrimitive.Title>
               <DialogPrimitive.Description>
-                {description ?? "Your knowledge, on your schedule."}
+                {description}
               </DialogPrimitive.Description>
             </div>
             <DialogPrimitive.Close asChild>

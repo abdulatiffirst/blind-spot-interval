@@ -147,7 +147,8 @@ export function TopicEditor({
           <div className="form-columns">
             <div>
               <label htmlFor="knowledge">
-                Initial knowledge <span className="muted">optional</span>
+                How well do you know this now?{" "}
+                <span className="muted">optional</span>
               </label>
               <select
                 id="knowledge"
@@ -303,7 +304,7 @@ export function TopicEditor({
           {!topic && (
             <div className="preview">
               <div>
-                <span className="eyebrow">YOUR FIRST REVIEW</span>
+                <span className="eyebrow">Your first review</span>
                 <strong>
                   {manual
                     ? date(
@@ -323,7 +324,7 @@ export function TopicEditor({
                   {preview
                     ? Math.round(preview.retention * 100)
                     : Math.round(prefs.retention[(importance ?? 3) - 1] * 100)}
-                  % target retention · {manual ? "Manual" : "Automatic"}
+                  % recall goal · {manual ? "Manual" : "Automatic"}
                 </span>
               </div>
               <label>
