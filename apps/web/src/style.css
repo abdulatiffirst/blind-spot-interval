@@ -840,13 +840,47 @@ input::placeholder {
   font-size: 12px;
   padding: 6px;
 }
+.content.settings-content {
+  box-sizing: content-box;
+  max-width: 1080px;
+  container-type: inline-size;
+}
+.settings-layout,
+.settings-secondary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 24px;
+}
+@container (min-width: 800px) {
+  .settings-layout {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 3fr);
+  }
+}
 .settings-card {
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 28px;
   background: var(--panel);
-  max-width: 760px;
-  margin-bottom: 24px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.settings-card .form-columns {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-width: 29rem;
+}
+.settings-card input[type="time"],
+.settings-card input.numeric-input {
+  max-width: 14rem;
+}
+.settings-card .inline {
+  flex-wrap: wrap;
+}
+@media (max-width: 760px) {
+  .settings-card .form-columns {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
 }
 .settings-card h2 {
   margin-bottom: 20px;

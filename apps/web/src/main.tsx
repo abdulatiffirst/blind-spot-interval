@@ -478,7 +478,11 @@ function App() {
               </Button>
             </div>
           </header>
-          <main className="content">
+          <main
+            className={
+              section === "Settings" ? "content settings-content" : "content"
+            }
+          >
             {error && (
               <div className="banner error" role="alert">
                 {error}
@@ -604,70 +608,76 @@ function App() {
                     <h1>Settings</h1>
                   </div>
                 </div>
-                <SettingsForm
-                  prefs={prefs}
-                  busy={busy}
-                  onSave={(p) =>
-                    action(
-                      () => api("/preferences", "PATCH", p),
-                      "Preferences saved",
-                    )
-                  }
-                />
-                <div className="settings-card">
-                  <h2>Google Calendar</h2>
-                  <p>
-                    {calendar.connected
-                      ? "Connected. Automatic sync runs in the background."
-                      : "Optional. Internal scheduling works without connecting."}
-                  </p>
-                  {calendar.error && <p role="alert">{calendar.error}</p>}
-                  <div className="inline">
-                    {calendar.connected ? (
-                      <>
-                        <Button
-                          onClick={() =>
-                            action(
-                              () => api("/calendar/resync", "POST"),
-                              "Calendar reconciliation queued",
-                            )
-                          }
-                        >
-                          Resync
-                        </Button>
-                        <Button
-                          onClick={() =>
-                            action(
-                              () => api("/calendar/disconnect", "POST"),
-                              "Calendar disconnected. Internal reviews are preserved.",
-                            )
-                          }
-                        >
-                          Disconnect
-                        </Button>
-                      </>
-                    ) : (
-                      <a
-                        className="button"
-                        href="/api/v1/calendar/connect"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          connectCalendar().catch((e) => setError(e.message));
-                        }}
-                      >
-                        Connect Google Calendar <ArrowUpRight size={16} />
-                      </a>
-                    )}
+                <div className="settings-layout">
+                  <SettingsForm
+                    prefs={prefs}
+                    busy={busy}
+                    onSave={(p) =>
+                      action(
+                        () => api("/preferences", "PATCH", p),
+                        "Preferences saved",
+                      )
+                    }
+                  />
+                  <div className="settings-secondary">
+                    <div className="settings-card">
+                      <h2>Google Calendar</h2>
+                      <p>
+                        {calendar.connected
+                          ? "Connected. Automatic sync runs in the background."
+                          : "Optional. Internal scheduling works without connecting."}
+                      </p>
+                      {calendar.error && <p role="alert">{calendar.error}</p>}
+                      <div className="inline">
+                        {calendar.connected ? (
+                          <>
+                            <Button
+                              onClick={() =>
+                                action(
+                                  () => api("/calendar/resync", "POST"),
+                                  "Calendar reconciliation queued",
+                                )
+                              }
+                            >
+                              Resync
+                            </Button>
+                            <Button
+                              onClick={() =>
+                                action(
+                                  () => api("/calendar/disconnect", "POST"),
+                                  "Calendar disconnected. Internal reviews are preserved.",
+                                )
+                              }
+                            >
+                              Disconnect
+                            </Button>
+                          </>
+                        ) : (
+                          <a
+                            className="button"
+                            href="/api/v1/calendar/connect"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              connectCalendar().catch((e) =>
+                                setError(e.message),
+                              );
+                            }}
+                          >
+                            Connect Google Calendar <ArrowUpRight size={16} />
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                    <div className="settings-card">
+                      <h2>Account</h2>
+                      <p>
+                        {user.display_name} · {user.email}
+                      </p>
+                      <Button disabled={busy} onClick={signOut}>
+                        Sign out
+                      </Button>
+                    </div>
                   </div>
-                </div>
-                <div className="settings-card">
-                  <h2>Account</h2>
-                  <p>
-                    {user.display_name} · {user.email}
-                  </p>
-                  <Button disabled={busy} onClick={signOut}>
-                    Sign out
-                  </Button>
                 </div>
               </>
             )}
