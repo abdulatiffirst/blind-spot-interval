@@ -31,10 +31,6 @@ const faq = [
     "Why Google sign in?",
     "Your Google account lets you return to your saved topics and reviews.",
   ],
-  [
-    "What does it cost and what happens to my data?",
-    "{{pricing}} · {{privacy_summary}}",
-  ],
 ];
 
 function Tagline() {
@@ -103,7 +99,6 @@ export function Landing({
             {cta}
             {feedback}
             <p className="fine-print">Google Calendar is optional.</p>
-            <small>{"{{stat}}"}</small>
           </div>
           <div className="product-example" aria-hidden="true">
             <h2>Chain rule</h2>
@@ -159,11 +154,15 @@ export function Landing({
       </main>
       <footer>
         <span>Blind Spot Interval</span>
-        <div className="inline wrap">
-          <a href="{{privacy_url}}">Privacy</a>
-          <a href="{{terms_url}}">Terms</a>
-          <span>{"{{support_email}}"}</span>
-        </div>
+        <section aria-labelledby="contact-heading">
+          <h2 id="contact-heading">Contact</h2>
+          <address>
+            <a href="https://t.me/aabdunazirov">Telegram: @aabdunazirov</a>
+            <a href="mailto:abdulatifabdunazirov@gmail.com">
+              Email: abdulatifabdunazirov@gmail.com
+            </a>
+          </address>
+        </section>
       </footer>
     </div>
   );
