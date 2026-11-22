@@ -26,7 +26,7 @@ test("landing explains the product and fits a phone", async ({
       return {
         logo: bounds("header .logo").left,
         heading: bounds("h1").left,
-        toggle: bounds("header button").right,
+        toggle: bounds("header .icon-button").right,
         demo: bounds(".product-example").right,
       };
     });
@@ -38,4 +38,27 @@ test("landing explains the product and fits a phone", async ({
   await expect(
     page.getByText("Something you studied", { exact: false }),
   ).toBeVisible();
+});
+
+test("switches languages, persists on reload and fits Russian text", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Русский" }).click();
+  await expect(page.locator("html")).toHaveAttribute("lang", "ru");
+  await page.getByText("Что такое тема?", { exact: true }).click();
+  await expect(page.getByText(/Это то, что вы изучили/)).toBeVisible();
+  await page.getByRole("button", { name: /Совсем не помню/ }).click();
+  await expect(page.getByRole("status")).toContainText("повторить");
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "Запоминайте то, что изучаете." }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.getByRole("button", { name: "English" }).click();
+  await expect(page.locator("html")).toHaveAttribute("lang", "en");
 });

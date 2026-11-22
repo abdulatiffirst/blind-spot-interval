@@ -450,3 +450,54 @@ it("begins OAuth over HTTP with a browser-bound HttpOnly state cookie", async ()
     );
   }
 });
+
+it("honors a preview, rejects a stale slot atomically, and preserves manual overrides", async () => {
+  const user = users[1];
+  const preview = await request(
+    "/schedule/preview?knowledge=3&importance=4&duration=40",
+    "GET",
+    undefined,
+    user,
+  );
+  expect(preview.data).toMatchObject({
+    mode: "automatic",
+    retention: 0.93,
+    start: expect.any(String),
+  });
+  const input = {
+    title: "Preview contract",
+    duration: 40,
+    initialKnowledge: 3,
+    importance: 4,
+    expectedStart: preview.data.start,
+  };
+  const first = await request("/topics", "POST", input, user);
+  expect(first.data.schedule).toMatchObject({
+    scheduled_at: preview.data.start,
+    mode: "automatic",
+  });
+  const stale = await request("/topics", "POST", input, user);
+  expect(stale.status).toBe(409);
+  const manual = await request(
+    "/schedule/preview?duration=40&scheduledAt=" +
+      encodeURIComponent(input.expectedStart),
+    "GET",
+    undefined,
+    user,
+  );
+  expect(manual.data).toMatchObject({
+    start: input.expectedStart,
+    mode: "manual",
+    reason: "Manual time overlaps another review.",
+  });
+  const saved = await request(
+    "/topics",
+    "POST",
+    { ...input, scheduledAt: manual.data.start },
+    user,
+  );
+  expect(saved.data.schedule).toMatchObject({
+    scheduled_at: manual.data.start,
+    mode: "manual",
+  });
+});

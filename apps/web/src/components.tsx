@@ -1,3 +1,4 @@
+import { translate } from "./i18n";
 import { ArrowUpRight, Layers3 } from "lucide-react";
 import { safeUrl } from "../../../packages/shared/src/index";
 import { date } from "./date";
@@ -46,17 +47,19 @@ export function ReviewRow({
           {minutesUntil !== null && (
             <b className={minutesUntil < 0 ? "overdue" : ""}>
               {minutesUntil < 0
-                ? "Overdue"
+                ? translate("overdue")
                 : minutesUntil === 0
-                  ? "Due now"
-                  : "Later today"}
+                  ? translate("dueNow")
+                  : translate("laterToday")}
             </b>
           )}
         </span>
       </div>
-      <span className="duration">{r.duration} min</span>
+      <span className="duration">
+        {r.duration} {translate("min")}
+      </span>
       <Button onClick={onOpen}>
-        Review <ArrowUpRight size={17} />
+        {translate("review")} <ArrowUpRight size={17} />
       </Button>
     </div>
   );

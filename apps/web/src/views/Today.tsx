@@ -1,3 +1,4 @@
+import { translate } from "../i18n";
 import { useState } from "react";
 import { ArrowUpRight, ArrowRight, Layers3, Plus } from "lucide-react";
 import type { Preferences } from "../../../../packages/shared/src/index";
@@ -39,23 +40,21 @@ export function TodayView({
         }}
       >
         <h1>
-          <label htmlFor="first-topic">What did you learn recently?</label>
+          <label htmlFor="first-topic">{translate("firstPrompt")}</label>
         </h1>
-        <p id="first-topic-help">
-          We will schedule your first review automatically.
-        </p>
+        <p id="first-topic-help">{translate("firstHelp")}</p>
         <input
           id="first-topic"
-          aria-label="Topic name"
+          aria-label={translate("topicName")}
           aria-describedby="first-topic-help"
           maxLength={200}
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder="For example: Chain rule"
+          placeholder={translate("exampleTitle")}
           required
         />
         <div className="example-chips">
-          {["Chain rule", "Past perfect"].map((example) => (
+          {[translate("chainRule"), translate("pastPerfect")].map((example) => (
             <Button
               type="button"
               key={example}
@@ -66,7 +65,7 @@ export function TodayView({
           ))}
         </div>
         <Button className="primary" disabled={busy || !title.trim()}>
-          {busy ? "Saving…" : "Add topic"}
+          {busy ? translate("saving") : translate("addTopic")}
         </Button>
       </form>
     );
@@ -74,22 +73,22 @@ export function TodayView({
     <>
       <div className="page-heading">
         <div>
-          <h1>Today</h1>
+          <h1>{translate("today")}</h1>
         </div>
         <Button className="primary" onClick={() => setEditor("new")}>
-          <Plus size={18} /> Add topic
+          <Plus size={18} /> {translate("addTopic")}
         </Button>
       </div>
       <div className="stats">
         <div>
           <span className="stat-label">
-            Reviews today <ArrowUpRight size={18} />
+            {translate("reviewsToday")} <ArrowUpRight size={18} />
           </span>
           <strong>{today.length.toString().padStart(2, "0")}</strong>
         </div>
         <div>
           <span className="stat-label">
-            Active topics <Layers3 size={16} />
+            {translate("activeTopics")} <Layers3 size={16} />
           </span>
           <strong>
             {new Set(reviews.map((r) => r.topic_id)).size
@@ -98,26 +97,29 @@ export function TodayView({
           </strong>
         </div>
         <div className="accent-stat">
-          <span className="stat-label">Review time today</span>
+          <span className="stat-label">{translate("reviewTimeToday")}</span>
           <strong>
             {today.reduce((minutes, review) => minutes + review.duration, 0)}{" "}
-            min
+            {translate("min")}
           </strong>
         </div>
       </div>
       <div className="progress-summary">
         <span>
-          {progress} of {progress + today.length} reviews complete today
+          {translate("completedToday", {
+            done: progress,
+            total: progress + today.length,
+          })}
         </span>
         <progress
-          aria-label="Today’s review progress"
+          aria-label={translate("todayProgress")}
           max={Math.max(1, progress + today.length)}
           value={progress}
         />
       </div>
       <div className="section-heading">
         <h2>
-          Your review queue <span className="badge">{today.length}</span>
+          {translate("yourQueue")} <span className="badge">{today.length}</span>
         </h2>
       </div>
       {today.length ? (
@@ -133,12 +135,12 @@ export function TodayView({
           ))}
         </div>
       ) : (
-        <p className="empty">No reviews due today.</p>
+        <p className="empty">{translate("nothingDue")}</p>
       )}
       <div className="section-heading upcoming-heading">
-        <h2>Upcoming reviews</h2>
+        <h2>{translate("upcoming")}</h2>
         <Button className="text-button" onClick={() => setSection("Calendar")}>
-          View calendar <ArrowRight size={16} />
+          {translate("viewCalendar")} <ArrowRight size={16} />
         </Button>
       </div>
       <div className="upcoming-grid">
@@ -156,12 +158,12 @@ export function TodayView({
               </span>
               <h3>{r.title}</h3>
               <span>
-                {r.duration} min <ArrowUpRight size={16} />
+                {r.duration} {translate("min")} <ArrowUpRight size={16} />
               </span>
             </button>
           ))}
         {reviews.length === 0 && (
-          <p className="muted">Your upcoming reviews will appear here.</p>
+          <p className="muted">{translate("upcomingEmpty")}</p>
         )}
       </div>
     </>

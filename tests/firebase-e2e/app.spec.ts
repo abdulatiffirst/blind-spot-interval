@@ -219,6 +219,10 @@ test("Google credential → first topic by name → first review date → review
   await signIn(page);
   await page.getByRole("textbox", { name: "Topic name" }).fill("Logarithms");
   await page.getByRole("button", { name: "Add topic", exact: true }).click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Add topic", exact: true })
+    .click();
   await expect(page.getByRole("status")).toContainText(
     /Added\. First review: .+ · \d{2}:\d{2}/,
   );
@@ -291,6 +295,10 @@ test("edit, archive, restore, keyboard dismissal and Firebase sign-out", async (
     .getByRole("textbox", { name: "Topic name" })
     .fill("Python functions");
   await page.getByRole("button", { name: "Add topic", exact: true }).click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Add topic", exact: true })
+    .click();
   await expect(page.getByRole("status")).toContainText("First review:");
   await expect(page.getByRole("dialog")).not.toBeVisible();
   await page.getByRole("button", { name: "Topics", exact: true }).click();
@@ -360,7 +368,6 @@ test("month navigation works from January 1 and failed previews resolve visibly"
     route.fulfill({ status: 503, json: { error: "Unavailable" } }),
   );
   await page.getByRole("button", { name: "Add topic", exact: true }).click();
-  await page.getByText("More options", { exact: true }).click();
   await expect(page.getByText("Schedule preview unavailable")).toBeVisible();
 });
 
@@ -423,17 +430,30 @@ test("optional topic details and manual date on a short viewport", async ({
   await page.setViewportSize({ width: 390, height: 390 });
   const submit = dialog.getByRole("button", { name: "Add topic", exact: true });
   await expect(submit).toBeInViewport({ ratio: 1 });
-  await dialog.getByText("More options", { exact: true }).click();
-  await dialog.getByLabel("How well do you know this now?").selectOption("3");
-  await dialog.getByLabel("Importance").selectOption("5");
+  await dialog
+    .locator(".level-choices")
+    .first()
+    .getByRole("button", { name: "3" })
+    .click();
+  await dialog
+    .locator(".level-choices")
+    .last()
+    .getByRole("button", { name: "5" })
+    .click();
   await dialog
     .getByLabel("Material 1", { exact: true })
     .fill("Differentiate the outer function first.");
+  await dialog.getByRole("button", { name: "Change", exact: true }).click();
+  await dialog.getByRole("button", { name: "Reset", exact: true }).click();
+  await expect(dialog.locator(".schedule-summary")).toContainText("Automatic");
+  await dialog.getByRole("button", { name: "Change", exact: true }).click();
   await dialog.getByLabel(/Change date/).fill("2031-04-10T18:25");
   await expect(dialog.locator(".preview strong")).toContainText(
-    "10 Apr · 18:25",
+    /April 10.*18:25/,
   );
-  await expect(dialog.locator(".preview")).toContainText("95% recall goal");
+  await expect(dialog.locator(".schedule-summary")).toContainText(
+    "95% recall goal",
+  );
   await expect(submit).toBeInViewport({ ratio: 1 });
   await submit.click();
   await expect(page.getByRole("status")).toContainText("10 Apr · 18:25");
@@ -446,4 +466,52 @@ test("optional topic details and manual date on a short viewport", async ({
   await expect(
     dialog.getByText("Differentiate the outer function first."),
   ).toBeVisible();
+});
+
+test("Russian account preference, pending archived filter, empty state and cancel", async ({
+  page,
+}) => {
+  await signIn(page);
+  await expect(page.getByRole("navigation")).toBeVisible();
+  const saved = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/preferences/language") &&
+      response.request().postDataJSON()?.language === "ru",
+  );
+  await page.getByRole("button", { name: "Русский" }).click();
+  expect((await saved).ok()).toBe(true);
+  await page.evaluate(() => localStorage.removeItem("bsi.language"));
+  await page.reload();
+  await page.getByRole("button", { name: "Темы", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Пока нет тем" }),
+  ).toBeVisible();
+  let release!: () => void;
+  const hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(/topics.*limit=100.*archived=true/, async (route) => {
+    await hold;
+    await route.continue();
+  });
+  await page.getByRole("switch", { name: "Архивные" }).check();
+  try {
+    await expect(page.getByRole("status")).toHaveText("Загружаем темы…");
+  } finally {
+    release();
+  }
+  await expect(
+    page.getByRole("heading", { name: "В архиве пока нет тем" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Добавить тему", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel(/Название темы/).fill("Тест");
+  await expect(dialog.locator(".schedule-summary")).toContainText(
+    "Автоматически",
+  );
+  await dialog.getByRole("button", { name: "Отмена" }).click();
+  await expect(dialog).toHaveCount(0);
+  expect((await db.collection(`users/${uid}/topics`).get()).empty).toBe(true);
 });

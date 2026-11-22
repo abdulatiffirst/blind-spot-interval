@@ -1,37 +1,24 @@
-import { useEffect, useRef } from "react";
+import { translate } from "../i18n";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { LanguageSwitch } from "../i18n/LanguageSwitch";
 import { Logo } from "../components";
 
 export const ratingLabels = [
-  "Forgot completely",
-  "Mostly forgot",
-  "Recalled with difficulty",
-  "Good recall",
-  "Effortless recall",
-];
+  "rating1",
+  "rating2",
+  "rating3",
+  "rating4",
+  "rating5",
+] as const;
 
 const faq = [
-  [
-    "What is a topic?",
-    "Something you studied and want to remember, such as the chain rule.",
-  ],
-  [
-    "What happens in a review?",
-    "Explain the topic from memory. Check your notes, then rate what you remembered.",
-  ],
-  [
-    "How are dates chosen?",
-    "Your ratings help set the next review date. We look for a time inside your study hours.",
-  ],
-  [
-    "Do I need Google Calendar?",
-    "No. You can see all your reviews in the app.",
-  ],
-  [
-    "Why Google sign in?",
-    "Your Google account lets you return to your saved topics and reviews.",
-  ],
-];
+  ["faqTopic", "faqTopicAnswer"],
+  ["faqReview", "faqReviewAnswer"],
+  ["faqDates", "faqDatesAnswer"],
+  ["faqCalendar", "faqCalendarAnswer"],
+  ["faqLogin", "faqLoginAnswer"],
+] as const;
 
 function Tagline() {
   const ref = useRef<HTMLParagraphElement>(null);
@@ -54,10 +41,7 @@ function Tagline() {
   let word = 0;
   return (
     <p className="tagline" ref={ref}>
-      {[
-        "Forgetting is normal.",
-        "Reviewing at the right time is how you beat it.",
-      ].map((line) => (
+      {[translate("forgetting"), translate("rightTime")].map((line) => (
         <span className="tagline-line" key={line}>
           {line.split(" ").map((w) => (
             <span key={word++} style={{ transitionDelay: word * 65 + "ms" }}>
@@ -79,74 +63,88 @@ export function Landing({
   cta: ReactNode;
   feedback: ReactNode;
 }) {
+  const [rating, setRating] = useState<number | null>(null);
   return (
     <div className="landing">
       <header>
         <div>
           <Logo />
-          <small>Spaced review for students.</small>
+          <small>{translate("strapline")}</small>
         </div>
-        {theme}
+        <div className="top-actions">
+          <LanguageSwitch />
+          {theme}
+        </div>
       </header>
       <main>
         <section className="landing-grid">
           <div>
-            <h1>Remember what you study.</h1>
-            <p className="intro">
-              Add a topic you just learned. Blind Spot Interval picks the best
-              days to review it, so it sticks.
-            </p>
+            <h1>{translate("hero")}</h1>
+            <p className="intro">{translate("intro")}</p>
             {cta}
             {feedback}
-            <p className="fine-print">Google Calendar is optional.</p>
+            <p className="fine-print">{translate("calendarOptional")}</p>
           </div>
-          <div className="product-example" aria-hidden="true">
-            <h2>Chain rule</h2>
-            <p>First review: Sunday, 18:00</p>
+          <div className="product-example" aria-label={translate("demo")}>
+            <h2>{translate("chainRule")}</h2>
+            <p>{translate("demoFirst")}</p>
             <div className="rating-options">
               {ratingLabels.map((r, i) => (
-                <span className="button" key={r}>
+                <button
+                  type="button"
+                  className="button"
+                  key={r}
+                  aria-pressed={rating === i}
+                  onClick={() => setRating(i)}
+                >
                   <span>{i + 1}</span>
-                  {r}
-                </span>
+                  {translate(r)}
+                </button>
               ))}
             </div>
+            {rating !== null && (
+              <p role="status">
+                {rating <= 1
+                  ? translate("demoSoon")
+                  : rating === 2
+                    ? translate("demoPractice")
+                    : translate("demoLater")}
+              </p>
+            )}
           </div>
         </section>
         <Tagline />
         <section className="landing-section">
-          <h2>How it works</h2>
+          <h2>{translate("howItWorks")}</h2>
           <ol className="step-list">
             <li>
-              <h3>Add a topic</h3>Type a name, like Chain rule. That is all it
-              needs.
+              <h3>{translate("stepAdd")}</h3>
+              {translate("stepAddCopy")}
             </li>
             <li>
-              <h3>Review when it is time</h3>We schedule it inside your study
-              hours. Reviews appear on Today and, if you want, in Google
-              Calendar.
+              <h3>{translate("stepReview")}</h3>
+              {translate("stepReviewCopy")}
             </li>
             <li>
-              <h3>Recall, then rate</h3>Try to explain it from memory, then rate
-              how it went. Easy topics come back later. Hard ones come back
-              sooner.
+              <h3>{translate("stepRate")}</h3>
+              {translate("stepRateCopy")}
             </li>
           </ol>
         </section>
         <section className="landing-section">
-          <h2>Benefits</h2>
+          <h2>{translate("benefits")}</h2>
           <ul>
-            <li>Review only what is fading.</li>
-            <li>Short sessions. The default review is 15 minutes.</li>
-            <li>Fits your day. Reviews land inside the study hours you set.</li>
+            <li>{translate("benefitRecall")}</li>
+            <li>{translate("benefitTime")}</li>
+            <li>{translate("benefitHours")}</li>
           </ul>
         </section>
         <section className="landing-section">
-          <h2>Common questions</h2>
+          <h2>{translate("faqHeading")}</h2>
           {faq.map(([q, a]) => (
             <details key={q}>
-              <summary>{q}</summary>
-              <p>{a}</p>
+              <summary>{translate(q)}</summary>
+              <p>{translate(a)}</p>
             </details>
           ))}
         </section>
@@ -154,15 +152,13 @@ export function Landing({
       </main>
       <footer>
         <span>Blind Spot Interval</span>
-        <section aria-labelledby="contact-heading">
-          <h2 id="contact-heading">Contact</h2>
-          <address>
-            <a href="https://t.me/aabdunazirov">Telegram: @aabdunazirov</a>
-            <a href="mailto:abdulatifabdunazirov@gmail.com">
-              Email: abdulatifabdunazirov@gmail.com
-            </a>
-          </address>
-        </section>
+
+        <address>
+          <a href="https://t.me/aabdunazirov">Telegram: @aabdunazirov</a>
+          <a href="mailto:abdulatifabdunazirov@gmail.com">
+            {translate("email")}
+          </a>
+        </address>
       </footer>
     </div>
   );

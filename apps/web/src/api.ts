@@ -8,7 +8,11 @@ export async function api(
   path: string,
   method = "GET",
   body?: unknown,
-  { user, signal }: { user?: User; signal?: AbortSignal } = {},
+  {
+    user,
+    signal,
+    idempotencyKey,
+  }: { user?: User; signal?: AbortSignal; idempotencyKey?: string } = {},
 ) {
   if (usesFirebase && path === "/auth/logout") {
     await logout();
@@ -26,7 +30,9 @@ export async function api(
       ...(usesFirebase
         ? { authorization: `Bearer ${token}` }
         : { "x-csrf-token": csrf }),
-      ...(method === "POST" ? { "idempotency-key": crypto.randomUUID() } : {}),
+      ...(method === "POST"
+        ? { "idempotency-key": idempotencyKey ?? crypto.randomUUID() }
+        : {}),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });

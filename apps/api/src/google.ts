@@ -1,3 +1,4 @@
+import { primaryAvailability } from "../../../packages/calendar-scheduler/src/availability.ts";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { sql } from "../../../packages/database/src/index.ts";
 import {
@@ -403,23 +404,28 @@ export async function renewWatch(user: string) {
   );
   await sql`UPDATE calendar_connections SET resource_id=${result.resourceId},channel_expires_at=${new Date(Number(result.expiration))} WHERE user_id=${user}`;
 }
-export async function refreshAvailability(user: string) {
+export async function primaryBusy(
+  user: string,
+  manual?: string,
+  duration?: number,
+) {
   const [c] =
-    await sql`SELECT * FROM calendar_connections WHERE user_id=${user} AND connected`;
-  if (!c) return;
-  const now = new Date(),
-    end = new Date(Date.now() + 31 * 86400000);
-  const data = await google(user, "freeBusy", {
-    method: "POST",
-    body: {
-      timeMin: now.toISOString(),
-      timeMax: end.toISOString(),
-      items: [{ id: "primary" }],
-    },
-  });
-  if (data.calendars?.primary?.errors?.length)
-    throw new Error("Google availability unavailable");
-  const external = data.calendars?.primary?.busy ?? [];
+    await sql`SELECT user_id FROM calendar_connections WHERE user_id=${user} AND connected`;
+  if (!c) return [];
+  return primaryAvailability(
+    (path, options) => google(user, path, options),
+    manual,
+    duration,
+  );
+}
+export async function refreshAvailability(user: string) {
+  const [connected] =
+    await sql`SELECT user_id FROM calendar_connections WHERE user_id=${user} AND connected`;
+  if (!connected) return;
+  const external = await primaryAvailability((path, options) =>
+    google(user, path, options),
+  );
+  const now = new Date();
   await sql.begin(async (tx) => {
     await lock(tx, user);
     const p = await preferences(user, tx);

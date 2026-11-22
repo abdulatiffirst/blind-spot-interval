@@ -1,7 +1,8 @@
+import { previewInput } from "../../packages/shared/src/index.ts";
 import express from "express";
 import { z } from "zod";
 import { DateTime } from "luxon";
-import { auth, db, all, fail } from "./store.ts";
+import { auth, db, all, fail, collection } from "./store.ts";
 import * as domain from "./domain.ts";
 import * as calendar from "./calendar.ts";
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
@@ -127,6 +128,18 @@ export function createApp() {
     ),
   );
   app.patch(
+    "/api/v1/preferences/language",
+    safe(async (req, res) => {
+      const { language } = z
+        .object({ language: z.enum(["en", "ru"]) })
+        .parse(req.body);
+      await collection(res.locals.uid, "preferences")
+        .doc("default")
+        .set({ language }, { merge: true });
+      res.json({ language });
+    }),
+  );
+  app.patch(
     "/api/v1/preferences",
     safe(async (req, res) =>
       res.json(await domain.savePreferences(res.locals.uid, req.body)),
@@ -163,6 +176,11 @@ export function createApp() {
               .max(100)
               .optional()
               .parse(req.headers["idempotency-key"]),
+            (manual, duration) =>
+              new calendar.CalendarSync(res.locals.uid).availability(
+                manual,
+                duration,
+              ),
           ),
         ),
     ),
@@ -311,20 +329,13 @@ export function createApp() {
   );
   app.get(
     "/api/v1/schedule/preview",
-    safe(async (req, res) =>
-      res.json(
-        await domain.preview(
-          res.locals.uid,
-          z
-            .object({
-              knowledge: z.coerce.number().int().min(1).max(5).optional(),
-              importance: z.coerce.number().int().min(1).max(5).optional(),
-              duration: z.coerce.number().int().min(5).max(180).default(15),
-            })
-            .parse(req.query),
-        ),
-      ),
-    ),
+    safe(async (req, res) => {
+      const input = previewInput.parse(req.query);
+      const external = await new calendar.CalendarSync(
+        res.locals.uid,
+      ).availability(input.scheduledAt, input.duration);
+      res.json(await domain.preview(res.locals.uid, input, external));
+    }),
   );
   app.get(
     "/api/v1/calendar/connect",

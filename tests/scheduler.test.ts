@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { primaryAvailability } from "../packages/calendar-scheduler/src/availability.ts";
 import { schedule } from "../packages/calendar-scheduler/src/index.ts";
 import { defaults } from "../packages/shared/src/index.ts";
 import { DateTime } from "luxon";
@@ -93,4 +94,30 @@ describe("Availability scheduling", () => {
     expect(start.minute).toBe(50);
     expect(start.plus({ minutes: 60 }).hour).toBe(3);
   });
+});
+
+it("checks the full manual interval against Google and propagates availability failures", async () => {
+  const at = "2032-04-01T09:00:00.000Z",
+    end = "2032-04-01T09:40:00.000Z";
+  const external = await primaryAvailability(
+    async (path, options) => {
+      expect(path).toBe("freeBusy");
+      expect(options.body).toEqual({
+        timeMin: at,
+        timeMax: end,
+        items: [{ id: "primary" }],
+      });
+      return { calendars: { primary: { busy: [{ start: at, end }] } } };
+    },
+    at,
+    40,
+  );
+  expect(
+    schedule({ ...input, manual: new Date(at), busy: external }).reason,
+  ).toBe("Manual time overlaps another event.");
+  await expect(
+    primaryAvailability(async () => ({
+      calendars: { primary: { errors: [{ reason: "forbidden" }] } },
+    })),
+  ).rejects.toThrow("availability");
 });

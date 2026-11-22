@@ -841,7 +841,7 @@ input::placeholder {
   padding: 6px;
 }
 .content.settings-content {
-  box-sizing: content-box;
+  width: 100%;
   max-width: 1080px;
   container-type: inline-size;
 }
@@ -1030,14 +1030,11 @@ input::placeholder {
 .landing {
   box-sizing: content-box;
   max-width: 1200px;
-  min-height: 100vh;
-  min-height: 100dvh;
   margin-inline: auto;
   padding-block: clamp(1rem, 3.5vh, 2.25rem);
   padding-inline: clamp(1rem, 3vw, 1.5rem);
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto 1fr auto;
 }
 .landing > header,
 .landing footer {
@@ -1076,6 +1073,7 @@ input::placeholder {
   margin-top: 0.85rem;
 }
 .landing footer {
+  justify-content: flex-start;
   border-top: 1px solid var(--border);
   padding-top: clamp(0.75rem, 2vh, 1.5rem);
   flex-wrap: wrap;
@@ -1089,7 +1087,8 @@ input::placeholder {
   font-style: normal;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.25rem 1.5rem;
+  gap: 0.25rem 1rem;
+  align-items: center;
   min-width: 0;
 }
 .landing footer a {
@@ -1375,8 +1374,8 @@ input::placeholder {
   .calendar-grid.week,
   .calendar-grid.month {
     grid-template-columns: repeat(7, minmax(110px, 1fr));
-    overflow: visible;
-    width: 780px;
+    overflow-x: auto;
+    width: 100%;
   }
   .content:has(.calendar-grid) {
     overflow-x: auto;
@@ -1585,11 +1584,6 @@ summary {
     opacity: 1;
   }
 }
-.workspace-skeleton {
-  background: var(--soft);
-  border-radius: 12px;
-  padding: 30px;
-}
 .first-topic {
   max-width: 600px;
   margin: 0 auto;
@@ -1606,26 +1600,6 @@ summary {
   gap: 8px;
   margin: 10px 0 18px;
 }
-.topic-options {
-  margin-top: 16px;
-}
-.topic-editor .form-actions {
-  position: sticky;
-  bottom: -1px;
-  background: var(--panel);
-  padding-block: 10px;
-  z-index: 1;
-}
-
-.workspace-skeleton::after {
-  content: "";
-  display: block;
-  width: min(100%, 24rem);
-  height: 44px;
-  border-radius: 8px;
-  margin-top: 14px;
-  background: var(--border);
-}
 @media (max-width: 760px) and (max-height: 530px) {
   .first-topic {
     padding: 14px;
@@ -1636,5 +1610,316 @@ summary {
   .first-topic .primary {
     position: sticky;
     bottom: 65px;
+  }
+}
+
+.landing main > .landing-section:last-child {
+  padding-block: 1rem 1.5rem;
+  border: 0;
+}
+.landing-section:has(details) {
+  padding-bottom: 0.5rem;
+}
+.landing footer address a {
+  display: inline-block;
+}
+@media (min-width: 761px) {
+  .landing footer address a {
+    border-inline-start: 1px solid var(--border);
+    padding-inline-start: 1rem;
+  }
+}
+.language-switch {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  flex: none;
+}
+.language-switch button {
+  border-radius: 999px;
+  color: var(--muted);
+  min-height: 30px;
+  min-width: 34px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.language-switch button[aria-pressed="true"],
+.level-choices button[aria-pressed="true"] {
+  background: var(--lime);
+  color: #111322;
+}
+.rating-options .button[aria-pressed="true"] {
+  border-color: #8eaa50;
+  background: color-mix(in srgb, var(--lime) 18%, var(--panel));
+}
+.filters > * {
+  margin: 0;
+  min-height: 42px;
+}
+.filters .search {
+  min-width: min(100%, 12rem);
+}
+.archived-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 13px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--text);
+}
+.archived-pill input {
+  appearance: none;
+  width: 27px;
+  height: 16px;
+  padding: 2px;
+  margin: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--muted);
+  cursor: pointer;
+}
+.archived-pill input::before {
+  content: "";
+  display: block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--panel);
+}
+.archived-pill input:checked {
+  background: #344219;
+}
+.archived-pill input:checked::before {
+  background: var(--lime);
+  transform: translateX(11px);
+}
+.archived-pill:has(:checked) {
+  border-color: #91ae53;
+  background: color-mix(in srgb, var(--lime) 18%, var(--panel));
+}
+.dialog:has(.topic-editor) {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  max-width: 660px;
+}
+.dialog:has(.topic-editor) .dialog-header {
+  padding: 20px 24px 16px;
+  margin: 0;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+.dialog:has(.topic-editor) .banner {
+  margin: 4px 24px;
+  flex: none;
+}
+.topic-editor {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.editor-scroll {
+  overflow: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
+  padding: 4px 24px 16px;
+  scroll-padding-block: 12px;
+}
+.topic-editor .form-actions {
+  margin: 0;
+  padding: 12px 24px max(12px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+  flex: none;
+}
+.rating-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-block: 18px;
+}
+.level {
+  position: relative;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+}
+.level legend {
+  font-size: 12px;
+  font-weight: 500;
+  padding-inline-end: 28px;
+  margin-bottom: 7px;
+}
+.level-choices {
+  display: flex;
+  gap: 4px;
+}
+.level-choices button {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  height: 32px;
+  background: var(--soft);
+  font-size: 13px;
+}
+.rating-help summary {
+  position: absolute;
+  right: 0;
+  top: -25px;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  width: 21px;
+  text-align: center;
+  font-size: 12px;
+}
+.rating-help summary::-webkit-details-marker {
+  display: none;
+}
+.rating-help span {
+  display: block;
+  padding: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.preview {
+  border: 1px solid var(--border);
+  border-inline-start: 4px solid var(--lime);
+}
+.preview h3 {
+  margin-bottom: 8px;
+}
+.preview .inline {
+  margin-top: 12px;
+}
+.schedule-summary {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 10px;
+}
+.topic-editor .numeric-input {
+  max-width: 12rem;
+}
+.loading-layout {
+  width: 100%;
+  max-width: 1080px;
+  text-align: start;
+}
+.center-screen .loading-layout {
+  max-width: min(90vw, 56rem);
+}
+.loading-heading,
+.loading-layout i,
+.loading-rows i {
+  display: block;
+  background: var(--border);
+  border-radius: 6px;
+}
+.loading-heading {
+  width: 35%;
+  height: 30px;
+  margin-bottom: 20px;
+}
+.loading-card {
+  padding: 20px;
+  min-height: 120px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+.loading-layout i {
+  width: 60%;
+  height: 12px;
+  margin: 8px 0;
+}
+.loading-layout i + i {
+  width: 40%;
+}
+.loading-calendar {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 2px;
+}
+.loading-calendar .loading-card {
+  padding: 8px;
+  min-height: 75px;
+}
+.loading-rows i {
+  width: 100%;
+  height: 38px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .loading-layout i,
+  .loading-heading {
+    animation: skeleton-pulse 1.8s ease-in-out infinite alternate;
+  }
+  @keyframes skeleton-pulse {
+    to {
+      opacity: 0.45;
+    }
+  }
+}
+@media (max-width: 600px) {
+  .rating-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dialog:has(.topic-editor) .dialog-header,
+  .editor-scroll,
+  .topic-editor .form-actions {
+    padding-inline: 16px;
+  }
+  .top-actions .today-date {
+    display: none;
+  }
+  .nav-item {
+    padding-inline: 6px;
+  }
+  .landing header {
+    flex-wrap: wrap;
+  }
+  .landing footer address {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .landing-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .level-choices button {
+    height: 36px;
+  }
+}
+
+.button {
+  white-space: normal;
+}
+.inline {
+  min-width: 0;
+}
+.history-row,
+.section-heading {
+  flex-wrap: wrap;
+}
+.topic-card h2,
+.review-row h3,
+.calendar-cell strong {
+  overflow-wrap: anywhere;
+}
+
+.dialog:has(.topic-editor) .banner {
+  max-height: 18dvh;
+  overflow: auto;
+}
+@media (max-height: 460px) {
+  .dialog:has(.topic-editor) .dialog-header {
+    padding-block: 9px;
+  }
+  .topic-editor .form-actions {
+    padding-block: 8px;
   }
 }

@@ -3,6 +3,7 @@ import { Timestamp } from "firebase-admin/firestore";
 import { db, collection } from "../../functions/src/store.ts";
 import {
   complete,
+  preview,
   ensureUser,
   createTopic,
   details,
@@ -143,6 +144,33 @@ afterAll(async () => {
   await db.collection("syncLocks").doc(uid).delete();
   const jobs = await db.collection("syncJobs").where("uid", "==", uid).get();
   for (const j of jobs.docs) await j.ref.delete();
+});
+it("previews connected calendar conflicts without moving an existing review", async () => {
+  const input = { duration: 40, knowledge: 5, importance: 4 };
+  const baseline = await preview(uid, input);
+  const start = baseline.start!;
+  const end = new Date(Date.parse(start) + 40 * 60000).toISOString();
+  const calendar = new CalendarSync(uid, async (url) => {
+    expect(String(url)).toMatch(/\/freeBusy$/);
+    return Response.json({
+      calendars: { primary: { busy: [{ start, end }] } },
+    });
+  });
+  const automatic = await preview(uid, input, await calendar.availability());
+  expect(automatic.start).toBe(end);
+  const manual = await preview(
+    uid,
+    { ...input, scheduledAt: start },
+    await calendar.availability(start, 40),
+  );
+  expect(manual).toMatchObject({
+    start,
+    mode: "manual",
+    reason: "Manual time overlaps another event.",
+  });
+  expect((await details(uid, topic.id)).schedule.scheduled_at).toBe(
+    topic.schedule.scheduled_at,
+  );
 });
 it("creates a dedicated calendar once and reuses it across reconnect", async () => {
   await sync.ensure();
