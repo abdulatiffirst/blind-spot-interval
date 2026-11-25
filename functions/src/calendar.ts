@@ -320,7 +320,12 @@ export class CalendarSync {
       if (!mapping || mapping.sync_status === "deleted") continue;
       // A full job's pending query may overlap a newer app mutation.
       const current = await get(this.uid, "reviewSchedules", scheduleId);
-      if (current?.status === "pending" && current.scheduled_at && !s) continue;
+      if (
+        current?.status === "pending" &&
+        current.scheduled_at &&
+        current.scheduled_at !== s?.scheduled_at
+      )
+        continue;
       try {
         await this.request(`${path}/${mapping.google_event_id}`, {
           method: "DELETE",
@@ -344,22 +349,30 @@ export class CalendarSync {
       const mappingRef = collection(this.uid, "calendarEvents").doc(s.id);
       let mapping = mappings.get(s.id);
       if (mapping?.sync_status === "blocked") continue;
-      if (!mapping) {
+      if (!mapping || mapping.sync_status === "deleted") {
         mapping = await db.runTransaction(async (tx) => {
           const [current, connection] = await Promise.all([
             tx.get(mappingRef),
             tx.get(connections.doc(this.uid)),
           ]);
           this.verifyGeneration(connection, c.generation);
-          if (current.exists) return current.data()!;
+          if (current.exists && current.get("sync_status") !== "deleted")
+            return current.data()!;
+          // Google can retain a tombstone under the previous event ID.
           const created = {
             schedule_id: s.id,
-            google_event_id: "b" + digest(`${this.uid}:${s.id}`).slice(0, 40),
+            google_event_id:
+              "b" +
+              digest(current.exists ? random() : `${this.uid}:${s.id}`).slice(
+                0,
+                40,
+              ),
             etag: null,
             sync_status: "pending",
             deletion_count: 0,
           };
-          tx.create(mappingRef, created);
+          if (current.exists) tx.set(mappingRef, created);
+          else tx.create(mappingRef, created);
           return created;
         });
       }

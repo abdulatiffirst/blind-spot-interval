@@ -502,3 +502,47 @@ it("coalesces webhook work while an inbound job is pending and ignores replayed 
   expect(next.get("channel_message")).toBe("4");
   expect((await queued.get()).get("attempts")).toBe(0);
 });
+
+it("publishes a new event after an unscheduled review gets another slot", async () => {
+  const owner = "calendar-tombstone-" + random();
+  const connection = db.collection("calendarConnections").doc(owner);
+  try {
+    await ensureUser(owner, {});
+    const created = await createTopic(owner, { title: "Tombstone test" });
+    const review = created.schedule;
+    const schedule = collection(owner, "reviewSchedules").doc(review.id);
+    const mapping = collection(owner, "calendarEvents").doc(review.id);
+    await connection.set({
+      connected: true,
+      generation: 1,
+      calendar_id: "old-event-fixture",
+      encrypted_tokens: encrypt({
+        access_token: "test-only",
+        expires_at: Date.now() + 3600000,
+      }),
+    });
+    const calendar = new CalendarSync(owner, async (url, options) => {
+      if (options?.method !== "DELETE") return transport(url, options);
+      const id = String(url).split("/").at(-1)!;
+      events.set(id, { ...events.get(id), status: "cancelled" });
+      return new Response(null, { status: 204 });
+    });
+    await calendar.outbound([review.id]);
+    const previous = (await mapping.get()).get("google_event_id");
+    await schedule.update({ scheduled_at: null });
+    await calendar.outbound([review.id]);
+    expect((await mapping.get()).get("sync_status")).toBe("deleted");
+    expect(events.get(previous).status).toBe("cancelled");
+    await schedule.update({ scheduled_at: review.scheduled_at });
+    await calendar.outbound([review.id]);
+    const current = await mapping.get();
+    expect(current.get("google_event_id")).not.toBe(previous);
+    expect(current.get("sync_status")).toBe("synced");
+    expect(events.get(current.get("google_event_id")).start.dateTime).toBe(
+      review.scheduled_at,
+    );
+  } finally {
+    await connection.delete();
+    await db.recursiveDelete(db.collection("users").doc(owner));
+  }
+});
