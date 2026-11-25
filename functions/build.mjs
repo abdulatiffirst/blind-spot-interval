@@ -1,4 +1,17 @@
 import { build, context } from "esbuild";
+import { execFileSync } from "node:child_process";
+const commit = (() => {
+  if (/^[a-f0-9]{40}$/.test(process.env.GITHUB_SHA ?? ""))
+    return process.env.GITHUB_SHA;
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return null;
+  }
+})();
 const options = {
   entryPoints: ["src/index.ts"],
   outfile: "lib/index.js",
@@ -14,6 +27,7 @@ const options = {
     "firebase-functions/*",
   ],
   sourcemap: true,
+  define: { __BLIND_SPOT_COMMIT__: JSON.stringify(commit) },
   banner: {
     js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);",
   },

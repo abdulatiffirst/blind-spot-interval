@@ -5,11 +5,7 @@ import type { Language } from "./i18n";
 import regions from "./timezone-regions.json";
 // Country codes from IANA zone.tab, including the aliases in tzdata.zi.
 const countries: Record<string, string> = regions;
-export function initialZone(saved: string, firstSetup: boolean) {
-  return firstSetup && saved === "UTC"
-    ? Intl.DateTimeFormat().resolvedOptions().timeZone || saved
-    : saved;
-}
+export { initialZone } from "./initial-zone";
 export function zoneOption(id: string, now: Date, language: Language = "en") {
   const raw = new Intl.DateTimeFormat("en", {
     timeZone: id,

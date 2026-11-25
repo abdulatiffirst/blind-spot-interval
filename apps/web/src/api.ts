@@ -44,32 +44,6 @@ export async function api(
   return value;
 }
 
-export async function loadTopics(
-  archived: boolean,
-  sort: string,
-  signal?: AbortSignal,
-) {
-  const items = [];
-  let total: number;
-  do {
-    const page = await api(
-      "/topics?limit=100&offset=" +
-        items.length +
-        "&archived=" +
-        archived +
-        "&sort=" +
-        sort,
-      "GET",
-      undefined,
-      { signal },
-    );
-    items.push(...page.items);
-    total = page.total;
-    if (!page.items.length) break;
-  } while (items.length < total);
-  return { items, total };
-}
-
 export async function connectCalendar() {
   if (!usesFirebase) {
     location.assign("/api/v1/calendar/connect");

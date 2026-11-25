@@ -10,7 +10,8 @@ export function TodayView({
   hasTopics,
   busy,
   onCreate,
-  reviews,
+  upcoming,
+  activeCount,
   today,
   prefs,
   progress,
@@ -21,7 +22,8 @@ export function TodayView({
   hasTopics: boolean;
   busy: boolean;
   onCreate: (title: string) => void;
-  reviews: Review[];
+  upcoming: Review[];
+  activeCount: number;
   today: Review[];
   prefs: Preferences;
   progress: number;
@@ -90,11 +92,7 @@ export function TodayView({
           <span className="stat-label">
             {translate("activeTopics")} <Layers3 size={16} />
           </span>
-          <strong>
-            {new Set(reviews.map((r) => r.topic_id)).size
-              .toString()
-              .padStart(2, "0")}
-          </strong>
+          <strong>{activeCount.toString().padStart(2, "0")}</strong>
         </div>
         <div className="accent-stat">
           <span className="stat-label">{translate("reviewTimeToday")}</span>
@@ -144,25 +142,22 @@ export function TodayView({
         </Button>
       </div>
       <div className="upcoming-grid">
-        {reviews
-          .filter((r) => !today.includes(r))
-          .slice(0, 3)
-          .map((r) => (
-            <button
-              className="upcoming-card"
-              key={r.id}
-              onClick={() => openTopic(r.topic_id)}
-            >
-              <span className="eyebrow">
-                {date(r.scheduled_at, prefs.timezone, "ccc, d LLL")}
-              </span>
-              <h3>{r.title}</h3>
-              <span>
-                {r.duration} {translate("min")} <ArrowUpRight size={16} />
-              </span>
-            </button>
-          ))}
-        {reviews.length === 0 && (
+        {upcoming.map((r) => (
+          <button
+            className="upcoming-card"
+            key={r.id}
+            onClick={() => openTopic(r.topic_id)}
+          >
+            <span className="eyebrow">
+              {date(r.scheduled_at, prefs.timezone, "ccc, d LLL")}
+            </span>
+            <h3>{r.title}</h3>
+            <span>
+              {r.duration} {translate("min")} <ArrowUpRight size={16} />
+            </span>
+          </button>
+        ))}
+        {activeCount === 0 && (
           <p className="muted">{translate("upcomingEmpty")}</p>
         )}
       </div>

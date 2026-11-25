@@ -1,4 +1,7 @@
 {
+  "refreshWorkspace": "Refresh workspace",
+  "loadMore": "Load more",
+  "loadingHistory": "Loading review history…",
   "pageTitle": "Blind Spot Interval: spaced review reminders for students",
   "language": "Language",
   "demo": "Try a review",

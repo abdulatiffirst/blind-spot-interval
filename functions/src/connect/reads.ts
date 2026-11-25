@@ -1,8 +1,14 @@
 import { FieldPath, type Query } from "firebase-admin/firestore";
 import { DateTime } from "luxon";
 import { z } from "zod";
-import { details, preferences } from "../domain.ts";
-import { collection, db, fail, type RecordData } from "../store.ts";
+import { preferences } from "../domain.ts";
+import {
+  collection,
+  get,
+  getByIds as byId,
+  fail,
+  type RecordData,
+} from "../store.ts";
 import { safeUrl } from "../../../packages/shared/src/index.ts";
 import type { Principal } from "./oauth.ts";
 
@@ -12,7 +18,7 @@ const date = z.iso.date();
 const status = z.enum(["active", "archived", "all"]);
 export const page = {
   limit: z.number().int().min(1).max(50).default(20),
-  cursor: z.string().min(1).max(512).optional(),
+  cursor: z.string().min(1).max(2048).optional(),
 };
 const period = { start: date.optional(), end: date.optional() };
 const historyFilter = {
@@ -157,17 +163,6 @@ async function scan(
       last && last < scanned.length ? next(data[last - 1], field) : null,
   };
 }
-async function byId(uid: string, name: string, ids: (string | undefined)[]) {
-  const unique = [...new Set(ids.filter((value): value is string => !!value))];
-  const docs = unique.length
-    ? await db.getAll(...unique.map((key) => collection(uid, name).doc(key)))
-    : [];
-  return new Map(
-    docs
-      .filter((doc) => doc.exists)
-      .map((doc) => [doc.id, { ...doc.data(), id: doc.id } as RecordData]),
-  );
-}
 function topicSummary(t: RecordData) {
   return {
     id: t.id,
@@ -193,31 +188,60 @@ export function scheduleSummary(r: RecordData | null | undefined) {
       }
     : null;
 }
-export async function topic(principal: Principal, topicId: string) {
-  const t = await details(principal.uid, topicId);
+async function topicContext(
+  principal: Principal,
+  topicId: string,
+  includeMaterials: boolean,
+) {
+  const uid = principal.uid;
+  const t = await get(uid, "topics", topicId);
+  if (!t) fail(404, "Topic not found");
   const history = can(principal, "reviews:history:read");
-  const latest = history
-    ? (
-        await byId(principal.uid, "reviewHistory", [t.memory?.latestReviewId])
-      ).get(t.memory?.latestReviewId)
-    : undefined;
+  const schedule = can(principal, "reviews:read");
+  const [memory, material, pending] = await Promise.all([
+    history ? get(uid, "memoryStates", topicId) : null,
+    includeMaterials ? get(uid, "topicMaterials", topicId) : null,
+    schedule && t.pendingScheduleId
+      ? get(uid, "reviewSchedules", t.pendingScheduleId)
+      : null,
+  ]);
+  const latest =
+    memory?.latestReviewId && memory.latestRating === undefined
+      ? await get(uid, "reviewHistory", memory.latestReviewId)
+      : null;
   return {
     ...topicSummary(t),
-    contentIsUntrusted: true,
-    materials: (t.materials ?? []).map((m: RecordData) => ({
-      text: m.text,
-      url: safeUrl(m.text),
-    })),
-    ...(history
+    ...(includeMaterials
       ? {
-          reviewCount: t.memory?.review_count ?? 0,
-          lastReviewAt: t.memory?.last_review_at ?? null,
-          latestRating: latest?.original_rating ?? null,
+          contentIsUntrusted: true,
+          materials: (material?.items ?? []).map((m: RecordData) => ({
+            text: m.text,
+            url: safeUrl(m.text),
+          })),
         }
       : {}),
-    ...(can(principal, "reviews:read")
-      ? { nextReview: scheduleSummary(t.schedule) }
+    ...(history
+      ? {
+          reviewCount: memory?.review_count ?? 0,
+          lastReviewAt: memory?.last_review_at ?? null,
+          latestRating: memory?.latestRating ?? latest?.original_rating ?? null,
+        }
       : {}),
+    ...(schedule
+      ? {
+          nextReview: scheduleSummary(
+            pending?.status === "pending" ? pending : null,
+          ),
+        }
+      : {}),
+  };
+}
+export async function topic(principal: Principal, topicId: string) {
+  const result = await topicContext(principal, topicId, true);
+  return {
+    ...result,
+    contentIsUntrusted: true as const,
+    materials: result.materials ?? [],
   };
 }
 export async function listTopics(
@@ -348,7 +372,7 @@ export async function topicHistory(
   input: z.infer<typeof topicHistoryInput>,
 ) {
   const [summary, records] = await Promise.all([
-    topic(p, input.topicId),
+    topicContext(p, input.topicId, false),
     history(p, historyInput.parse(input)),
   ]);
   const {
@@ -417,7 +441,9 @@ export async function due(p: Principal, input: z.infer<typeof dueInput>) {
       const latest = await byId(
         p.uid,
         "reviewHistory",
-        [...memory.values()].map((m) => m.latestReviewId),
+        [...memory.values()]
+          .filter((m) => m.latestRating === undefined)
+          .map((m) => m.latestReviewId),
       );
       const summaries = new Map(
         matching.map((r) => [
@@ -428,8 +454,10 @@ export async function due(p: Principal, input: z.infer<typeof dueInput>) {
             ...(can(p, "reviews:history:read")
               ? {
                   lastRating:
+                    memory.get(r.topic_id)?.latestRating ??
                     latest.get(memory.get(r.topic_id)?.latestReviewId)
-                      ?.original_rating ?? null,
+                      ?.original_rating ??
+                    null,
                 }
               : {}),
           },
@@ -467,9 +495,31 @@ async function analysis(p: Principal, input: Omit<AnalysisInput, "groupBy">) {
   const [topics, history, schedules] = await Promise.all([
     selected
       ? { items: [...selected.values()], complete: true }
-      : sample(collection(uid, "topics").orderBy("created_at", "desc")),
-    sample(historyQuery(uid, input.topicId, from, to)),
-    sample(scheduled),
+      : sample(
+          collection(uid, "topics")
+            .orderBy("created_at", "desc")
+            .select("title", "tags", "importance", "status"),
+        ),
+    sample(
+      historyQuery(uid, input.topicId, from, to).select(
+        "topic_id",
+        "completed_at",
+        "original_rating",
+        "corrected_at",
+        "fsrs_log.scheduledDays",
+        "new_state.scheduledDays",
+      ),
+    ),
+    sample(
+      scheduled.select(
+        "topic_id",
+        "scheduled_at",
+        "duration",
+        "status",
+        "mode",
+        "adjustment_reason",
+      ),
+    ),
   ]);
   const joined = new Map(topics.items.map((t) => [t.id, t]));
   const missing = [...history.items, ...schedules.items]

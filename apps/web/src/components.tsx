@@ -1,6 +1,6 @@
 import { translate } from "./i18n";
 import { ArrowUpRight, Layers3 } from "lucide-react";
-import { safeUrl } from "../../../packages/shared/src/index";
+import { safeUrl } from "../../../packages/shared/src/client";
 import { date } from "./date";
 import type { Review } from "./types";
 import { Button } from "./ui";

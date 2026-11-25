@@ -1,5 +1,10 @@
+import { prepareOutbound } from "./calendar-queue.ts";
 import { createHash, randomUUID } from "node:crypto";
-import type { Transaction } from "firebase-admin/firestore";
+import {
+  FieldPath,
+  type Query,
+  type Transaction,
+} from "firebase-admin/firestore";
 import { DateTime } from "luxon";
 import {
   db,
@@ -7,7 +12,10 @@ import {
   collection,
   mutate,
   get,
-  all,
+  records,
+  pendingSchedules,
+  getByIds,
+  type Rows,
   fail,
   type RecordData,
   type MutationGuard,
@@ -39,51 +47,39 @@ export async function ensureUser(
   uid: string,
   profile: { email?: string; name?: string },
 ) {
-  await db.runTransaction(async (tx) => {
-    const ref = userRef(uid),
-      s = await tx.get(ref);
-    if (!s.exists) {
-      tx.create(ref, {
-        id: uid,
-        email: profile.email ?? "",
-        display_name: profile.name ?? profile.email ?? "Learner",
-        timezone: "UTC",
-        revision: 0,
-        created_at: new Date().toISOString(),
-      });
-      tx.create(collection(uid, "preferences").doc("default"), defaults);
-    } else if (
-      (profile.email && profile.email !== s.data()!.email) ||
-      (profile.name && profile.name !== s.data()!.display_name)
-    ) {
-      tx.update(ref, {
-        email: profile.email ?? s.data()!.email,
-        display_name: profile.name ?? s.data()!.display_name,
-      });
+  const ref = userRef(uid);
+  const current = (await ref.get()).data();
+  const changed = (user: RecordData) =>
+    (profile.email && profile.email !== user.email) ||
+    (profile.name && profile.name !== user.display_name);
+  if (current && !changed(current)) return current;
+  return db.runTransaction(async (tx) => {
+    const existing = (await tx.get(ref)).data();
+    if (existing) {
+      if (!changed(existing)) return existing;
+      const update = {
+        email: profile.email ?? existing.email,
+        display_name: profile.name ?? existing.display_name,
+      };
+      tx.update(ref, update);
+      return { ...existing, ...update };
     }
+    const created = {
+      id: uid,
+      email: profile.email ?? "",
+      display_name: profile.name ?? profile.email ?? "Learner",
+      timezone: "UTC",
+      revision: 0,
+      topicIndexVersion: 1,
+      created_at: new Date().toISOString(),
+    };
+    tx.create(ref, created);
+    tx.create(collection(uid, "preferences").doc("default"), defaults);
+    return created;
   });
-  return (await userRef(uid).get()).data()!;
 }
 export async function preferences(uid: string): Promise<Preferences> {
   return { ...defaults, ...(await get(uid, "preferences", "default")) };
-}
-export function queue(
-  tx: Transaction,
-  uid: string,
-  revision: number,
-  type = "outbound",
-  key?: string,
-) {
-  const id = digest(key ?? `${uid}:${revision}:${type}`);
-  tx.set(db.collection("syncJobs").doc(id), {
-    uid,
-    type,
-    status: "pending",
-    attempts: 0,
-    retryAt: Date.now(),
-    createdAt: Date.now(),
-  });
-  return id;
 }
 function busy(sessions: RecordData[], except?: string): Busy[] {
   return sessions
@@ -125,7 +121,7 @@ export function placement(
   };
 }
 const pendingQuery = (ref: FirebaseFirestore.CollectionReference) =>
-  ref.where("status", "==", "pending").limit(1001);
+  pendingSchedules(ref).limit(1001);
 function boundedPending(sessions: RecordData[]) {
   if (sessions.length > 1000)
     fail(409, "This schedule exceeds the Connect preview and mutation limit");
@@ -133,33 +129,38 @@ function boundedPending(sessions: RecordData[]) {
 }
 async function pendingSessions(uid: string) {
   const snapshot = await pendingQuery(collection(uid, "reviewSchedules")).get();
-  return boundedPending(
-    snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id })),
-  );
+  return boundedPending(records(snapshot));
 }
 async function context(
   read: (name: string, id: string) => Promise<RecordData | null>,
-  rows: (name: string, query?: typeof pendingQuery) => Promise<RecordData[]>,
+  rows: Rows,
   topicId?: string,
   mcp = false,
+  extra?: "memoryStates" | "topicMaterials",
 ) {
-  const [pref, sessions, tags, topic, memory, materials] = await Promise.all([
+  const [pref, sessions, topic, extraRecord] = await Promise.all([
     read("preferences", "default"),
-    rows("reviewSchedules", mcp ? pendingQuery : undefined),
-    mcp && topicId ? [] : rows("tags"),
+    rows("reviewSchedules", mcp ? pendingQuery : pendingSchedules),
     topicId ? read("topics", topicId) : null,
-    topicId ? read("memoryStates", topicId) : null,
-    topicId ? read("topicMaterials", topicId) : null,
+    topicId && extra ? read(extra, topicId) : null,
   ]);
   if (topicId && !topic) fail(404, "Topic not found");
   return {
     p: { ...defaults, ...pref } as Preferences,
     sessions: mcp ? boundedPending(sessions) : sessions,
-    tags,
     topic: topic!,
-    memory: memory!,
-    materials: materials?.items ?? [],
+    memory: extraRecord!,
+    materials: extraRecord?.items ?? [],
   };
+}
+async function existingTags(uid: string, tags: string[], tx: Transaction) {
+  const result = await getByIds(
+    uid,
+    "tags",
+    tags.map((tag) => digest(tag.toLocaleLowerCase())),
+    tx,
+  );
+  return [...result.values()];
 }
 function saveContent(
   tx: Transaction,
@@ -199,7 +200,11 @@ function normalizeTags(items: string[], existing: RecordData[]) {
   ];
 }
 export async function details(uid: string, id: string): Promise<RecordData> {
-  const topic = (await get(uid, "topics", id)) ?? fail(404, "Topic not found");
+  const {
+    nextReviewAt: _sortDate,
+    importanceOrder: _sortImportance,
+    ...topic
+  } = (await get(uid, "topics", id)) ?? fail(404, "Topic not found");
   const [materials, memory, review, p] = await Promise.all([
     get(uid, "topicMaterials", id),
     get(uid, "memoryStates", id),
@@ -216,49 +221,148 @@ export async function details(uid: string, id: string): Promise<RecordData> {
     schedule: review?.status === "pending" ? review : null,
   };
 }
-export async function listTopics(
-  uid: string,
-  q: {
-    archived?: string;
-    q?: string;
-    tag?: string;
-    sort?: string;
-    offset: number;
-    limit: number;
-  },
-) {
-  const [topics, sessions, p] = await Promise.all([
-    all(uid, "topics"),
-    all(uid, "reviewSchedules"),
-    preferences(uid),
-  ]);
-  const filtered = topics
-    .filter(
-      (t) =>
-        t.status === (q.archived === "true" ? "archived" : "active") &&
-        (!q.q || t.title.toLowerCase().includes(q.q.toLowerCase())) &&
-        (!q.tag || t.tags.includes(q.tag)),
+export const nextReviewSortKey = (at?: string | null) => at ?? "9999-01-01";
+type TopicQuery = {
+  archived?: string;
+  q?: string;
+  tag?: string;
+  sort?: string;
+  offset: number;
+  limit: number;
+  cursor?: string;
+};
+function topicCursor(q: TopicQuery): [string | number, string] | undefined {
+  if (!q.cursor) return;
+  try {
+    const value: unknown = JSON.parse(
+      Buffer.from(q.cursor, "base64url").toString("utf8"),
+    );
+    if (
+      Array.isArray(value) &&
+      value.length === 2 &&
+      (q.sort === "importance"
+        ? typeof value[0] === "number" && Number.isFinite(value[0])
+        : typeof value[0] === "string" && value[0].length <= 200) &&
+      typeof value[1] === "string" &&
+      /^[A-Za-z0-9_-]{1,128}$/.test(value[1])
     )
-    .map((t): RecordData => ({
-      ...t,
-      target_retention: p.retention[(t.importance ?? 3) - 1],
-      schedule:
-        sessions.find(
-          (s) => s.id === t.pendingScheduleId && s.status === "pending",
-        ) ?? null,
-    }));
-  filtered.sort((a, b) =>
-    q.sort === "title"
-      ? a.title.localeCompare(b.title)
-      : q.sort === "importance"
-        ? (b.importance ?? 3) - (a.importance ?? 3)
-        : Date.parse(a.schedule?.scheduled_at ?? "9999-01-01") -
-            Date.parse(b.schedule?.scheduled_at ?? "9999-01-01") ||
-          a.id.localeCompare(b.id),
+      return [value[0], value[1]];
+  } catch {
+    /* Return a consistent validation error. */
+  }
+  fail(400, "Invalid pagination cursor");
+}
+export async function listTopics(uid: string, q: TopicQuery, indexed = false) {
+  let base: Query = collection(uid, "topics").where(
+    "status",
+    "==",
+    q.archived === "true" ? "archived" : "active",
   );
+  if (q.tag) base = base.where("tags", "array-contains", q.tag);
+  const cursor = topicCursor(q);
+  const field = q.sort === "importance" ? "importanceOrder" : "nextReviewAt";
+  const direction = q.sort === "importance" ? "desc" : "asc";
+  let total: number, page: RecordData[], hasMore: boolean;
+  let key = (t: RecordData): string | number => t[field];
+  if (indexed && q.sort !== "title" && !q.q && !q.offset) {
+    let query = base.orderBy(field, direction).orderBy(FieldPath.documentId());
+    if (cursor) query = query.startAfter(...cursor);
+    const [snapshot, count] = await Promise.all([
+      query.limit(q.limit + 1).get(),
+      base.count().get(),
+    ]);
+    const docs = records(snapshot);
+    total = count.data().count;
+    page = docs.slice(0, q.limit);
+    hasMore = docs.length > q.limit;
+  } else {
+    // Firestore cannot match arbitrary substrings or the browser's localeCompare order.
+    // Sort a status/tag-filtered projection and load full documents only for this page.
+    const candidates = records(
+      await base
+        .select("title", "importance", "pendingScheduleId", "nextReviewAt")
+        .get(),
+    ).filter(
+      (topic) => !q.q || topic.title.toLowerCase().includes(q.q.toLowerCase()),
+    );
+    const schedules =
+      !indexed && q.sort !== "title" && q.sort !== "importance"
+        ? await getByIds(
+            uid,
+            "reviewSchedules",
+            candidates.map((topic) => topic.pendingScheduleId),
+          )
+        : new Map<string, RecordData>();
+    key = (t) => {
+      if (q.sort === "title") return t.title;
+      if (q.sort === "importance") return t.importance ?? 3;
+      if (indexed) return t.nextReviewAt;
+      const schedule = schedules.get(t.pendingScheduleId);
+      return nextReviewSortKey(
+        schedule?.status === "pending" ? schedule.scheduled_at : null,
+      );
+    };
+    const compare = (
+      a: string | number,
+      b: string | number,
+      id: string,
+      otherId: string,
+    ) =>
+      (typeof a === "number"
+        ? Number(b) - a
+        : q.sort === "title"
+          ? a.localeCompare(String(b))
+          : Date.parse(a) - Date.parse(String(b))) ||
+      (id < otherId ? -1 : id === otherId ? 0 : 1);
+    candidates.sort((a, b) => compare(key(a), key(b), a.id, b.id));
+    total = candidates.length;
+    const position = cursor
+      ? candidates.findIndex(
+          (t) => compare(key(t), cursor[0], t.id, cursor[1]) > 0,
+        )
+      : q.offset;
+    const selected =
+      position < 0 ? [] : candidates.slice(position, position + q.limit);
+    const docs = await getByIds(
+      uid,
+      "topics",
+      selected.map((t) => t.id),
+    );
+    page = selected
+      .map((t) => docs.get(t.id))
+      .filter((t): t is RecordData => !!t);
+    hasMore = position >= 0 && position + q.limit < total;
+  }
+  const [pref, schedules] = await Promise.all([
+    preferences(uid),
+    getByIds(
+      uid,
+      "reviewSchedules",
+      page.map((t) => t.pendingScheduleId),
+    ),
+  ]);
+  const last = page.at(-1);
   return {
-    items: filtered.slice(q.offset, q.offset + q.limit),
-    total: filtered.length,
+    items: page.map((t) => {
+      const schedule = schedules.get(t.pendingScheduleId);
+      const {
+        nextReviewAt: _sortDate,
+        importanceOrder: _sortImportance,
+        ...topic
+      } = t;
+      return {
+        ...topic,
+        target_retention: pref.retention[(t.importance ?? 3) - 1],
+        schedule: schedule?.status === "pending" ? schedule : null,
+      };
+    }),
+    total,
+    nextCursor:
+      hasMore && last
+        ? Buffer.from(JSON.stringify([key(last), last.id])).toString(
+            "base64url",
+          )
+        : null,
   };
 }
 export async function createTopic(
@@ -276,7 +380,7 @@ export async function createTopic(
   const external = await availability?.(input.scheduledAt, input.duration);
   await mutate(
     uid,
-    async (tx, read, rows, root) => {
+    async (tx, read, rows) => {
       const existing = await read("topics", id);
       if (existing)
         return {
@@ -285,7 +389,11 @@ export async function createTopic(
           duration: existing.duration,
           first: null,
         };
-      const c = await context(read, rows, undefined, !!guard);
+      const [c, outbound, tags] = await Promise.all([
+        context(read, rows, undefined, !!guard),
+        prepareOutbound(tx, uid),
+        existingTags(uid, input.tags, tx),
+      ]);
       const topic = {
         id,
         user_id: uid,
@@ -295,7 +403,7 @@ export async function createTopic(
         target_retention: c.p.retention[(input.importance ?? 3) - 1],
         duration: input.duration,
         status: "active",
-        tags: normalizeTags(input.tags, c.tags),
+        tags: normalizeTags(input.tags, tags),
         pendingScheduleId: scheduleId,
         created_at: now.toISOString(),
         updated_at: now.toISOString(),
@@ -315,8 +423,12 @@ export async function createTopic(
         }),
       };
       verifyPreview(input.expectedStart, session.scheduled_at);
-      tx.create(collection(uid, "topics").doc(id), topic);
-      saveContent(tx, uid, id, input, c.tags);
+      tx.create(collection(uid, "topics").doc(id), {
+        ...topic,
+        nextReviewAt: nextReviewSortKey(session.scheduled_at),
+        importanceOrder: input.importance ?? 3,
+      });
+      saveContent(tx, uid, id, input, tags);
       tx.create(collection(uid, "memoryStates").doc(id), {
         topic_id: id,
         card: null,
@@ -328,7 +440,7 @@ export async function createTopic(
         last_review_at: null,
       });
       tx.create(collection(uid, "reviewSchedules").doc(scheduleId), session);
-      const jobId = queue(tx, uid, root.revision + 1);
+      const jobId = outbound([scheduleId]);
       return {
         id,
         title: topic.title,
@@ -342,8 +454,11 @@ export async function createTopic(
   return details(uid, id);
 }
 export async function editTopic(uid: string, id: string, raw: unknown) {
-  await mutate(uid, async (tx, read, rows, root) => {
-    const c = await context(read, rows, id);
+  await mutate(uid, async (tx, read, rows) => {
+    const [c, outbound] = await Promise.all([
+      context(read, rows, id, false, "topicMaterials"),
+      prepareOutbound(tx, uid),
+    ]);
     const input = applyTopicPatch(
       {
         title: c.topic.title,
@@ -355,24 +470,21 @@ export async function editTopic(uid: string, id: string, raw: unknown) {
       },
       raw,
     );
+    const tags = await existingTags(uid, input.tags, tx);
     const topic: RecordData = {
       ...c.topic,
       title: input.title,
       importance: input.importance,
       duration: input.duration,
       target_retention: c.p.retention[(input.importance ?? 3) - 1],
-      tags: normalizeTags(input.tags, c.tags),
+      tags: normalizeTags(input.tags, tags),
       updated_at: new Date().toISOString(),
     };
     const pending = c.sessions.find(
       (s) => s.id === topic.pendingScheduleId && s.status === "pending",
     );
-    tx.set(collection(uid, "topics").doc(id), topic);
-    saveContent(tx, uid, id, input, c.tags);
-    if (pending)
-      tx.update(collection(uid, "reviewSchedules").doc(pending.id), {
-        duration: input.duration,
-        ...placement(
+    const change = pending
+      ? placement(
           topic,
           new Date(pending.ideal_due_at),
           c.p,
@@ -386,21 +498,40 @@ export async function editTopic(uid: string, id: string, raw: unknown) {
                 ? new Date(pending.scheduled_at)
                 : undefined,
           },
-        ),
+        )
+      : null;
+    tx.set(collection(uid, "topics").doc(id), {
+      ...topic,
+      nextReviewAt: nextReviewSortKey(change?.scheduled_at),
+      importanceOrder: input.importance ?? 3,
+    });
+    saveContent(tx, uid, id, input, tags);
+    if (pending && change)
+      tx.update(collection(uid, "reviewSchedules").doc(pending.id), {
+        duration: input.duration,
+        ...change,
       });
-    queue(tx, uid, root.revision + 1);
+    outbound([pending?.id]);
   });
   return details(uid, id);
 }
 export async function archive(uid: string, id: string, restore = false) {
   const nextId = randomUUID(),
     now = new Date();
-  await mutate(uid, async (tx, read, rows, root) => {
-    const c = await context(read, rows, id);
+  await mutate(uid, async (tx, read, rows) => {
+    const c = await context(
+      read,
+      rows,
+      id,
+      false,
+      restore ? "memoryStates" : undefined,
+    );
     if (c.topic.status === (restore ? "active" : "archived")) return;
     const pending = c.sessions.find(
       (s) => s.id === c.topic.pendingScheduleId && s.status === "pending",
     );
+    const outbound = await prepareOutbound(tx, uid);
+    let nextReviewAt = nextReviewSortKey();
     if (restore) {
       const last = c.memory?.latestReviewId
         ? await read("reviewHistory", c.memory.latestReviewId)
@@ -411,6 +542,10 @@ export async function archive(uid: string, id: string, restore = false) {
         : c.memory?.card?.dueAt
           ? new Date(c.memory.card.dueAt)
           : coldStart(now, c.topic.initial_knowledge, c.p.timezone);
+      const choice = placement(c.topic, ideal, c.p, c.sessions, now, {
+        recovery,
+      });
+      nextReviewAt = nextReviewSortKey(choice.scheduled_at);
       tx.create(collection(uid, "reviewSchedules").doc(nextId), {
         id: nextId,
         topic_id: id,
@@ -419,7 +554,7 @@ export async function archive(uid: string, id: string, restore = false) {
         status: "pending",
         recovery,
         created_at: now.toISOString(),
-        ...placement(c.topic, ideal, c.p, c.sessions, now, { recovery }),
+        ...choice,
       });
     } else if (pending)
       tx.update(collection(uid, "reviewSchedules").doc(pending.id), {
@@ -428,9 +563,11 @@ export async function archive(uid: string, id: string, restore = false) {
     tx.update(collection(uid, "topics").doc(id), {
       status: restore ? "active" : "archived",
       pendingScheduleId: restore ? nextId : null,
+      nextReviewAt,
+      importanceOrder: c.topic.importance ?? 3,
       updated_at: now.toISOString(),
     });
-    queue(tx, uid, root.revision + 1);
+    outbound([restore ? nextId : pending?.id]);
   });
   return { ok: true };
 }
@@ -538,7 +675,7 @@ export async function reschedule(
   const now = new Date();
   await mutate(
     uid,
-    async (tx, read, rows, root) => {
+    async (tx, read, rows) => {
       const session =
         (await read("reviewSchedules", id)) ?? fail(404, "Review not found");
       if (session.status !== "pending")
@@ -574,8 +711,13 @@ export async function reschedule(
               recovery: session.recovery,
             },
           );
+      const outbound = await prepareOutbound(tx, uid);
       tx.update(collection(uid, "reviewSchedules").doc(id), choice);
-      const jobId = queue(tx, uid, root.revision + 1);
+      if (c.topic.pendingScheduleId === id)
+        tx.update(collection(uid, "topics").doc(c.topic.id), {
+          nextReviewAt: nextReviewSortKey(choice.scheduled_at),
+        });
+      const jobId = outbound([id]);
       return { ...session, ...choice, jobId };
     },
     confirmation?.guard,
@@ -593,7 +735,7 @@ export async function complete(
     requestTime = new Date();
   return mutate(
     uid,
-    async (tx, read, rows, root) => {
+    async (tx, read, rows) => {
       const [session, existing] = await Promise.all([
         read("reviewSchedules", id),
         read("reviewHistory", id),
@@ -608,7 +750,13 @@ export async function complete(
       }
       if (session.status !== "pending" && !correct)
         fail(409, "Review is no longer pending");
-      const c = await context(read, rows, session.topic_id, !!guard);
+      const c = await context(
+        read,
+        rows,
+        session.topic_id,
+        !!guard,
+        "memoryStates",
+      );
       if (c.topic.status !== "active") fail(409, "Topic is archived");
       let previous = c.memory.card,
         now = requestTime;
@@ -653,6 +801,7 @@ export async function complete(
           { recovery: rating <= 2 },
         ),
       };
+      const outbound = await prepareOutbound(tx, uid);
       if (correct) {
         tx.create(collection(uid, "reviewCorrections").doc(randomUUID()), {
           review_id: id,
@@ -691,74 +840,217 @@ export async function complete(
         review_count: c.memory.review_count + (correct ? 0 : 1),
         last_review_at: now.toISOString(),
         latestReviewId: id,
+        latestRating: rating,
       });
       tx.create(collection(uid, "reviewSchedules").doc(nextId), next);
       tx.update(collection(uid, "topics").doc(session.topic_id), {
         pendingScheduleId: nextId,
+        nextReviewAt: nextReviewSortKey(next.scheduled_at),
       });
-      const jobId = queue(tx, uid, root.revision + 1);
+      const jobId = outbound([id, nextId, correct ? pending?.id : undefined]);
       return { duplicate: false, next, ...(guard ? { review, jobId } : {}) };
     },
     guard,
   );
 }
 export async function savePreferences(uid: string, raw: unknown) {
-  const p = preferencesInput.parse(raw);
-  await mutate(uid, async (tx, read, rows, root) => {
-    const sessions = await rows("reviewSchedules");
-    const topics = await rows("topics");
+  const { language, ...p } = preferencesInput.parse(raw);
+  return mutate(uid, async (tx, read, rows) => {
     const previous = await read("preferences", "default");
     const changed =
       !previous ||
-      ["timezone", "studyStart", "studyEnd", "daysBefore", "daysAfter"].some(
-        (k) => previous[k] !== p[k as keyof Preferences],
-      );
+      (
+        [
+          "timezone",
+          "studyStart",
+          "studyEnd",
+          "daysBefore",
+          "daysAfter",
+        ] as const
+      ).some((k) => previous[k] !== p[k]);
     if (changed) {
-      const updated = [...sessions];
-      for (const session of updated.filter(
-        (s) => s.status === "pending" && s.mode === "automatic",
-      )) {
-        const topic = topics.find((t) => t.id === session.topic_id)!;
-        const change = placement(
-          topic,
-          new Date(session.ideal_due_at),
-          p,
-          updated,
-          new Date(),
-          { exclude: session.id, recovery: session.recovery },
-        );
-        Object.assign(session, change);
-        tx.update(collection(uid, "reviewSchedules").doc(session.id), change);
+      const sessions = await rows("reviewSchedules", pendingSchedules);
+      const automatic = sessions.filter(
+        (session) => session.mode === "automatic",
+      );
+      if (automatic.length) {
+        const [topics, outbound] = await Promise.all([
+          getByIds(
+            uid,
+            "topics",
+            automatic.map((session) => session.topic_id),
+            tx,
+          ),
+          prepareOutbound(tx, uid),
+        ]);
+        const changedIds: string[] = [];
+        const now = new Date();
+        for (const session of automatic) {
+          const topic = topics.get(session.topic_id);
+          if (!topic) continue;
+          const change = placement(
+            topic,
+            new Date(session.ideal_due_at),
+            p,
+            sessions,
+            now,
+            { exclude: session.id, recovery: session.recovery },
+          );
+          if (
+            change.scheduled_at === session.scheduled_at &&
+            change.adjustment_reason === session.adjustment_reason
+          )
+            continue;
+          Object.assign(session, change);
+          changedIds.push(session.id);
+          tx.update(collection(uid, "reviewSchedules").doc(session.id), change);
+          if (topic.pendingScheduleId === session.id)
+            tx.update(collection(uid, "topics").doc(topic.id), {
+              nextReviewAt: nextReviewSortKey(change.scheduled_at),
+            });
+        }
+        outbound(changedIds);
       }
     }
-    tx.set(collection(uid, "preferences").doc("default"), p, { merge: true });
+    const savedLanguage = previous?.language ?? language;
+    tx.set(
+      collection(uid, "preferences").doc("default"),
+      {
+        ...p,
+        ...(savedLanguage ? { language: savedLanguage } : {}),
+      },
+      { merge: true },
+    );
     tx.update(userRef(uid), { timezone: p.timezone });
-    queue(tx, uid, root.revision + 1);
+    return { ...p, ...(savedLanguage ? { language: savedLanguage } : {}) };
   });
-  return p;
 }
-export async function reviews(uid: string, today = false) {
-  const [sessions, topics, p] = await Promise.all([
-    all(uid, "reviewSchedules"),
-    all(uid, "topics"),
-    preferences(uid),
-  ]);
-  const end = DateTime.now().setZone(p.timezone).endOf("day").toMillis();
+async function titledReviews(uid: string, query: Query) {
+  const sessions = records(await query.get());
+  const topics = await getByIds(
+    uid,
+    "topics",
+    sessions.map((s) => s.topic_id),
+  );
   return sessions
-    .filter(
-      (s) =>
-        s.status === "pending" &&
-        (!today || (s.scheduled_at && Date.parse(s.scheduled_at) <= end)),
-    )
     .map((s): RecordData => ({
       ...s,
-      title: topics.find((t) => t.id === s.topic_id)?.title ?? "",
-      importance: topics.find((t) => t.id === s.topic_id)?.importance ?? null,
+      title: topics.get(s.topic_id)?.title ?? "",
+      importance: topics.get(s.topic_id)?.importance ?? null,
     }))
     .sort((a, b) =>
       (a.scheduled_at ?? "9999").localeCompare(b.scheduled_at ?? "9999"),
     );
 }
+const endOfToday = (timezone: string) =>
+  DateTime.now().setZone(timezone).endOf("day").toUTC().toISO()!;
+export async function reviews(uid: string, today = false) {
+  const query = pendingSchedules(collection(uid, "reviewSchedules"));
+  return titledReviews(
+    uid,
+    today
+      ? query
+          .where("scheduled_at", ">", "")
+          .where(
+            "scheduled_at",
+            "<=",
+            endOfToday((await preferences(uid)).timezone),
+          )
+      : query,
+  );
+}
+
+export async function progress(uid: string, timezone: string) {
+  const start = DateTime.now().setZone(timezone).startOf("day");
+  const snapshot = await collection(uid, "reviewHistory")
+    .where("completed_at", ">=", start.toUTC().toISO()!)
+    .where("completed_at", "<", start.plus({ days: 1 }).toUTC().toISO()!)
+    .count()
+    .get();
+  return { completed: snapshot.data().count };
+}
+export async function todaySummary(uid: string, timezone: string) {
+  const pending = pendingSchedules(collection(uid, "reviewSchedules"));
+  const end = endOfToday(timezone);
+  const [today, upcoming, active, hasTopics, completed] = await Promise.all([
+    titledReviews(
+      uid,
+      pending.where("scheduled_at", ">", "").where("scheduled_at", "<=", end),
+    ),
+    titledReviews(
+      uid,
+      pending.where("scheduled_at", ">", end).orderBy("scheduled_at").limit(3),
+    ),
+    pending.count().get(),
+    collection(uid, "topics").limit(1).select().get(),
+    progress(uid, timezone),
+  ]);
+  if (
+    upcoming.length < 3 &&
+    active.data().count > today.length + upcoming.length
+  ) {
+    upcoming.push(
+      ...(await titledReviews(
+        uid,
+        pending.where("scheduled_at", "==", null).limit(3 - upcoming.length),
+      )),
+    );
+  }
+  return {
+    today,
+    upcoming,
+    activeCount: active.data().count,
+    hasTopics: !hasTopics.empty,
+    ...completed,
+  };
+}
+
+export async function topicHistory(
+  uid: string,
+  id: string,
+  page?: { limit: number; cursor?: string },
+) {
+  if (!(await collection(uid, "topics").doc(id).get()).exists)
+    fail(404, "Topic not found");
+  let query = collection(uid, "reviewHistory")
+    .where("topic_id", "==", id)
+    .orderBy("completed_at", "desc")
+    .orderBy(FieldPath.documentId());
+  if (page?.cursor) {
+    let value: unknown;
+    try {
+      value = JSON.parse(
+        Buffer.from(page.cursor, "base64url").toString("utf8"),
+      );
+    } catch {
+      fail(400, "Invalid pagination cursor");
+    }
+    if (
+      !Array.isArray(value) ||
+      value.length !== 2 ||
+      typeof value[0] !== "string" ||
+      !Number.isFinite(Date.parse(value[0])) ||
+      typeof value[1] !== "string" ||
+      !/^[A-Za-z0-9_-]{1,128}$/.test(value[1])
+    )
+      fail(400, "Invalid pagination cursor");
+    query = query.startAfter(...value);
+  }
+  if (!page) return records(await query.limit(100).get());
+  const docs = records(await query.limit(page.limit + 1).get());
+  const items = docs.slice(0, page.limit),
+    last = items.at(-1);
+  return {
+    items,
+    nextCursor:
+      docs.length > page.limit && last
+        ? Buffer.from(JSON.stringify([last.completed_at, last.id])).toString(
+            "base64url",
+          )
+        : null,
+  };
+}
+
 export async function preview(
   uid: string,
   input: {
@@ -772,7 +1064,11 @@ export async function preview(
 ) {
   const [p, sessions] = await Promise.all([
     preferences(uid),
-    pendingOnly ? pendingSessions(uid) : all(uid, "reviewSchedules"),
+    pendingOnly
+      ? pendingSessions(uid)
+      : pendingSchedules(collection(uid, "reviewSchedules"))
+          .get()
+          .then(records),
   ]);
   const now = new Date(),
     ideal = coldStart(now, input.knowledge ?? null, p.timezone);

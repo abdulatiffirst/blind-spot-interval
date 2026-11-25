@@ -46,26 +46,10 @@ export const preferencesInput = z
     daysAfter: z.number().int().min(0).max(14),
     retention: z.array(z.number().min(0.8).max(0.97)).length(5),
     onboarded: z.boolean().default(true),
+    language: z.enum(["en", "ru"]).optional(),
   })
   .refine((v) => v.studyStart < v.studyEnd, "Study end must follow start");
 export type Preferences = z.infer<typeof preferencesInput>;
 export type TopicInput = z.infer<typeof topicInput>;
-export const defaults: Preferences = {
-  timezone: "UTC",
-  studyStart: "09:00",
-  studyEnd: "21:00",
-  duration: 15,
-  daysBefore: 1,
-  daysAfter: 2,
-  retention: [0.85, 0.88, 0.9, 0.93, 0.95],
-  onboarded: false,
-};
+export { defaults, safeUrl } from "./client.ts";
 export const mappedRating = (n: number) => (n <= 2 ? 1 : n - 1);
-export function safeUrl(text: string) {
-  try {
-    const u = new URL(text);
-    return ["https:", "http:"].includes(u.protocol) ? u.href : null;
-  } catch {
-    return null;
-  }
-}

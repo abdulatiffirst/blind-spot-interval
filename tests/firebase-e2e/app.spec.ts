@@ -148,11 +148,14 @@ test("loads the workspace with a Firebase token and restores it on reload", asyn
     ),
   ).toBe(true);
 
-  const restoredProfile = page.waitForResponse("**/api/v1/me");
-  const restoredPreferences = page.waitForResponse("**/api/v1/preferences");
+  const restoredProfile = page.waitForResponse(
+    (res) => new URL(res.url()).pathname === "/api/v1/me",
+  );
   await page.reload();
   expect((await restoredProfile).status()).toBe(200);
-  expect((await restoredPreferences).status()).toBe(200);
+  expect((await (await restoredProfile).json()).preferences.onboarded).toBe(
+    true,
+  );
   await expect(page.getByRole("navigation")).toBeVisible();
   await expect(onboarding).not.toBeVisible();
   expect(meRequests).toHaveLength(2);
@@ -165,7 +168,7 @@ test("cancels a pending profile request when Firebase signs out", async ({
   const pending = new Promise<Route>((resolve) => {
     holdRequest = resolve;
   });
-  await page.route("**/api/v1/me", holdRequest, {
+  await page.route((url) => url.pathname === "/api/v1/me", holdRequest, {
     times: 1,
   });
   await signIn(page);
@@ -197,7 +200,7 @@ for (const [status, message] of [
     page,
   }) => {
     await page.route(
-      "**/api/v1/me",
+      (url) => url.pathname === "/api/v1/me",
       (route) =>
         route.fulfill({
           status,

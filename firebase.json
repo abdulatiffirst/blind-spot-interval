@@ -91,6 +91,15 @@
             "value": "frame-ancestors 'none'"
           }
         ]
+      },
+      {
+        "source": "/build-info.json",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-store"
+          }
+        ]
       }
     ]
   },

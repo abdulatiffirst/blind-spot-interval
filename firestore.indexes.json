@@ -129,6 +129,128 @@
           "order": "DESCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "calendarConnections",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "connected",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "nextReconcileAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "reviewHistory",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "topic_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "completed_at",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "reviewSchedules",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "mode",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "scheduled_at",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "topics",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "nextReviewAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "topics",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "tags",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "nextReviewAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "topics",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "importanceOrder",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "topics",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "tags",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "importanceOrder",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": [
@@ -172,6 +294,111 @@
       "collectionGroup": "mcpClients",
       "fieldPath": "expiresAt",
       "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "calendarConnections",
+      "fieldPath": "encrypted_tokens",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "calendarConnections",
+      "fieldPath": "repairOutbound",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "calendarConnections",
+      "fieldPath": "outboundJobId",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "calendarConnections",
+      "fieldPath": "inboundJobId",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "calendarConnections",
+      "fieldPath": "reconcileJobId",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "calendarConnections",
+      "fieldPath": "channel_message",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "calendarConnections",
+      "fieldPath": "pending_channel_message",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "calendarConnections",
+      "fieldPath": "channel_token",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "calendarConnections",
+      "fieldPath": "pending_channel_token",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "calendarEvents",
+      "fieldPath": "publishedHash",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "calendarEvents",
+      "fieldPath": "publishedStart",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "calendarEvents",
+      "fieldPath": "publishedEnd",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "topicMaterials",
+      "fieldPath": "items",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "memoryStates",
+      "fieldPath": "card",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "memoryStates",
+      "fieldPath": "parameters",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "reviewHistory",
+      "fieldPath": "previous_state",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "reviewHistory",
+      "fieldPath": "new_state",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "reviewHistory",
+      "fieldPath": "fsrs_log",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "reviewHistory",
+      "fieldPath": "parameters",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "reviewCorrections",
+      "fieldPath": "old_state",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "syncJobs",
+      "fieldPath": "scheduleIds",
       "indexes": []
     }
   ]

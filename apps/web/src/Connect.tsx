@@ -1,3 +1,4 @@
+import { useLanguage } from "./i18n";
 import { useEffect, useState } from "react";
 import { api } from "./api";
 import { Button } from "./ui";
@@ -189,12 +190,12 @@ type Locale = keyof typeof copy;
 type Messages = typeof copy.en;
 const localeKey = "blind-spot-connect-language";
 function useLocale() {
-  const [locale, set] = useState<Locale>(() => {
+  const appLanguage = useLanguage();
+  const [selected, set] = useState<Locale | null>(() => {
     const saved = localStorage.getItem(localeKey);
-    return saved === "ru" || (!saved && navigator.language.startsWith("ru"))
-      ? "ru"
-      : "en";
+    return saved === "ru" || saved === "en" ? saved : null;
   });
+  const locale = selected ?? appLanguage;
   return {
     locale,
     messages: copy[locale],

@@ -100,12 +100,12 @@ function output(row: RecordData) {
 async function receipt(row: RecordData) {
   const { jobId, ...data } = row.receipt;
   const upcoming = data.firstReview ?? data.nextReview ?? data.review;
-  if (!upcoming || !jobId) return data;
-  const [connection, job, mapping, currentSchedule] = await db.getAll(
+  if (!upcoming) return data;
+  const [connection, mapping, currentSchedule, job] = await db.getAll(
     db.collection("calendarConnections").doc(row.uid),
-    db.collection("syncJobs").doc(jobId),
     collection(row.uid, "calendarEvents").doc(upcoming.id),
     collection(row.uid, "reviewSchedules").doc(upcoming.id),
+    ...(jobId ? [db.collection("syncJobs").doc(jobId)] : []),
   );
   const current = currentSchedule.data();
   const currentReview = current
@@ -119,12 +119,18 @@ async function receipt(row: RecordData) {
         ? "unscheduled"
         : mapping.get("sync_status") === "blocked"
           ? "blocked"
-          : job.get("status") === "failed"
+          : job?.get("status") === "failed"
             ? "failed"
             : mapping.get("sync_status") === "synced" &&
-                (job.get("status") === "done" || row.name === "create_topic")
+                (mapping.get("publishedStart")
+                  ? Date.parse(mapping.get("publishedStart")) ===
+                      Date.parse(currentReview.scheduledAt) &&
+                    Date.parse(mapping.get("publishedEnd")) ===
+                      Date.parse(currentReview.scheduledAt) +
+                        currentReview.duration * 60_000
+                  : job?.get("status") === "done")
               ? "synced"
-              : job.get("error")
+              : job?.get("error")
                 ? "retrying"
                 : "pending";
   return {

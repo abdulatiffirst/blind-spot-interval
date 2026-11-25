@@ -280,7 +280,7 @@ describe("Firebase Auth → Functions v2 → real Firestore emulator", () => {
     expect(
       (await db.collection("syncJobs").where("uid", "==", users[0].uid).get())
         .empty,
-    ).toBe(false);
+    ).toBe(true);
   });
   it("corrects latest review with an audit record without adding a fake repetition", async () => {
     const r = await request(
@@ -500,4 +500,85 @@ it("honors a preview, rejects a stale slot atomically, and preserves manual over
     scheduled_at: manual.data.start,
     mode: "manual",
   });
+});
+
+it("pages Firebase topics and history without losing ties or matching substrings", async () => {
+  const user = await googleUser();
+  try {
+    expect((await request("/me", "GET", undefined, user)).status).toBe(200);
+    const date = new Date().toISOString();
+    const batch = db.batch();
+    for (const [topicId, title, importance] of [
+      ["first", "Основы анализа", null],
+      ["second", "Продвинутый анализ", 4],
+      ["third", "Геометрия", null],
+    ] as const) {
+      batch.create(db.doc(`users/${user.uid}/topics/${topicId}`), {
+        title,
+        importance,
+        status: "active",
+        tags: ["Math"],
+        nextReviewAt: "9999-01-01",
+        importanceOrder: importance ?? 3,
+      });
+    }
+    for (const reviewId of ["one", "two", "three"]) {
+      batch.create(db.doc(`users/${user.uid}/reviewHistory/${reviewId}`), {
+        topic_id: "first",
+        completed_at: date,
+        original_rating: 4,
+      });
+    }
+    await batch.commit();
+    const path = "/topics?sort=importance&limit=1&tag=Math";
+    const first = await request(path, "GET", undefined, user);
+    expect(first.data).toMatchObject({ total: 3, items: [{ id: "second" }] });
+    const second = await request(
+      path + "&cursor=" + first.data.nextCursor,
+      "GET",
+      undefined,
+      user,
+    );
+    expect(second.data.items).toMatchObject([{ id: "first" }]);
+    const search = await request(
+      "/topics?q=" + encodeURIComponent("АНАЛИЗ"),
+      "GET",
+      undefined,
+      user,
+    );
+    expect(search.data.items.map((item: { id: string }) => item.id)).toEqual([
+      "first",
+      "second",
+    ]);
+    const history = await request(
+      "/topics/first/history?limit=2",
+      "GET",
+      undefined,
+      user,
+    );
+    expect(history.data.items.map((item: { id: string }) => item.id)).toEqual([
+      "one",
+      "three",
+    ]);
+    const remaining = await request(
+      "/topics/first/history?limit=2&cursor=" + history.data.nextCursor,
+      "GET",
+      undefined,
+      user,
+    );
+    expect(remaining.data).toMatchObject({
+      items: [{ id: "two" }],
+      nextCursor: null,
+    });
+    const isolated = await request(
+      "/topics/first/history?limit=2",
+      "GET",
+      undefined,
+      users[1],
+    );
+    expect(isolated.status).toBe(404);
+  } finally {
+    await db.recursiveDelete(db.collection("users").doc(user.uid));
+    await auth.deleteUser(user.uid);
+  }
 });

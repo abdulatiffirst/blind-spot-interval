@@ -1,12 +1,12 @@
 import { previewInput } from "../../packages/shared/src/index.ts";
 import express from "express";
 import { z } from "zod";
-import { DateTime } from "luxon";
 import { auth, db, all, fail, collection } from "./store.ts";
 import * as domain from "./domain.ts";
 import * as calendar from "./calendar.ts";
 import { mountAccount, mountPublic } from "./connect/server.ts";
 import { config, type Config } from "./connect/oauth.ts";
+declare const __BLIND_SPOT_COMMIT__: string | null;
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 const cookie = (text: string | undefined, name: string) =>
   text
@@ -58,12 +58,32 @@ export function createApp() {
     if (req.method === "OPTIONS") return res.sendStatus(204);
     next();
   });
+  app.use((req, res, next) => {
+    const mcp = req.path === "/api/mcp";
+    const start = performance.now();
+    if (Math.random() < 0.01)
+      res.once("finish", () => {
+        console.info("Blind Spot request sample", {
+          surface: mcp ? "mcp" : "api",
+          status: res.statusCode,
+          elapsedMs: Math.round(performance.now() - start),
+        });
+      });
+    next();
+  });
   mountPublic(app, connect);
   app.get(
     "/health",
     safe(async (_req, res) => {
       await db.collection("_health").limit(1).get();
-      res.json({ status: "ok", backend: "firebase" });
+      res.json({
+        status: "ok",
+        backend: "firebase",
+        commit:
+          typeof __BLIND_SPOT_COMMIT__ === "undefined"
+            ? null
+            : __BLIND_SPOT_COMMIT__,
+      });
     }),
   );
   app.get(
@@ -104,7 +124,7 @@ export function createApp() {
         if (decoded.firebase?.sign_in_provider !== "google.com")
           return res.status(403).json({ error: "Use Google Sign-In" });
         res.locals.uid = decoded.uid;
-        await domain.ensureUser(decoded.uid, {
+        res.locals.user = await domain.ensureUser(decoded.uid, {
           email: decoded.email,
           name: decoded.name,
         });
@@ -131,11 +151,15 @@ export function createApp() {
   mountAccount(app, connect);
   app.get(
     "/api/v1/me",
-    safe(async (_req, res) => {
-      const user = (
-        await db.collection("users").doc(res.locals.uid).get()
-      ).data();
-      res.json({ user, csrf: "" });
+    safe(async (req, res) => {
+      const { topicIndexVersion: _index, ...user } = res.locals.user;
+      res.json({
+        user,
+        csrf: "",
+        ...(req.query.include === "preferences"
+          ? { preferences: await domain.preferences(res.locals.uid) }
+          : {}),
+      });
     }),
   );
   app.post("/api/v1/auth/logout", (_req, res) => res.json({ ok: true }));
@@ -173,10 +197,18 @@ export function createApp() {
           tag: z.string().max(40).optional(),
           sort: z.enum(["date", "title", "importance"]).default("date"),
           offset: z.coerce.number().int().min(0).default(0),
+          cursor: z.string().min(1).max(2048).optional(),
           limit: z.coerce.number().int().min(1).max(100).default(50),
         })
         .parse(req.query);
-      res.json(await domain.listTopics(res.locals.uid, q));
+      res.json(
+        await domain.listTopics(
+          res.locals.uid,
+          q,
+          process.env.TOPIC_INDEX_ENABLED !== "false" &&
+            res.locals.user.topicIndexVersion === 1,
+        ),
+      );
     }),
   );
   app.post(
@@ -249,14 +281,21 @@ export function createApp() {
   app.get(
     "/api/v1/topics/:id/history",
     safe(async (req, res) => {
-      const topicId = id.parse(req.params.id);
-      await domain.details(res.locals.uid, topicId);
-      const history = await all(res.locals.uid, "reviewHistory");
+      const page =
+        req.query.limit || req.query.cursor
+          ? z
+              .object({
+                limit: z.coerce.number().int().min(1).max(100).default(25),
+                cursor: z.string().min(1).max(2048).optional(),
+              })
+              .parse(req.query)
+          : undefined;
       res.json(
-        history
-          .filter((h) => h.topic_id === topicId)
-          .sort((a, b) => b.completed_at.localeCompare(a.completed_at))
-          .slice(0, 100),
+        await domain.topicHistory(
+          res.locals.uid,
+          id.parse(req.params.id),
+          page,
+        ),
       );
     }),
   );
@@ -283,16 +322,19 @@ export function createApp() {
   app.get(
     "/api/v1/reviews/progress",
     safe(async (_req, res) => {
-      const p = await domain.preferences(res.locals.uid),
-        today = DateTime.now().setZone(p.timezone),
-        history = await all(res.locals.uid, "reviewHistory");
-      res.json({
-        completed: history.filter((h) =>
-          DateTime.fromISO(h.completed_at)
-            .setZone(p.timezone)
-            .hasSame(today, "day"),
-        ).length,
-      });
+      const p = await domain.preferences(res.locals.uid);
+      res.json(await domain.progress(res.locals.uid, p.timezone));
+    }),
+  );
+  app.get(
+    "/api/v1/dashboard",
+    safe(async (_req, res) => {
+      const prefs = await domain.preferences(res.locals.uid);
+      const [today, status] = await Promise.all([
+        domain.todaySummary(res.locals.uid, prefs.timezone),
+        calendarStatus(res.locals.uid),
+      ]);
+      res.json({ ...today, prefs, calendar: status });
     }),
   );
   app.post(
@@ -371,21 +413,7 @@ export function createApp() {
   );
   app.get(
     "/api/v1/calendar/status",
-    safe(async (_req, res) => {
-      const c = (
-        await db.collection("calendarConnections").doc(res.locals.uid).get()
-      ).data();
-      res.json(
-        c
-          ? {
-              connected: c.connected,
-              calendar_id: c.calendar_id ?? null,
-              last_sync_at: c.last_sync_at ?? null,
-              error: c.error ?? null,
-            }
-          : { connected: false },
-      );
-    }),
+    safe(async (_req, res) => res.json(await calendarStatus(res.locals.uid))),
   );
   app.post(
     "/api/v1/calendar/disconnect",
@@ -427,4 +455,16 @@ export function createApp() {
     },
   );
   return app;
+}
+
+async function calendarStatus(uid: string) {
+  const c = (await db.collection("calendarConnections").doc(uid).get()).data();
+  return c
+    ? {
+        connected: c.connected,
+        calendar_id: c.calendar_id ?? null,
+        last_sync_at: c.last_sync_at ?? null,
+        error: c.error ?? null,
+      }
+    : { connected: false };
 }

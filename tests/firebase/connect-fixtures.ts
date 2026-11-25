@@ -1,6 +1,12 @@
 export async function signInAsEmulatedGoogleUser(origin: string) {
+  const authHost = process.env.FIREBASE_AUTH_EMULATOR_HOST ?? "127.0.0.1:9099";
+  const allowed = {
+    "demo-blind-spot-interval": ["127.0.0.1:9099", "localhost:9099"],
+    "demo-blind-spot-benchmark": ["127.0.0.1:9199"],
+  };
+  const project = process.env.GCLOUD_PROJECT as keyof typeof allowed;
   if (
-    process.env.GCLOUD_PROJECT !== "demo-blind-spot-interval" ||
+    !allowed[project]?.includes(authHost) ||
     !["localhost", "127.0.0.1"].includes(new URL(origin).hostname)
   )
     throw new Error(
@@ -25,7 +31,9 @@ export async function signInAsEmulatedGoogleUser(origin: string) {
     ).toString("base64url") +
     ".";
   const response = await fetch(
-    "http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithIdp?key=demo-api-key",
+    "http://" +
+      authHost +
+      "/identitytoolkit.googleapis.com/v1/accounts:signInWithIdp?key=demo-api-key",
     {
       method: "POST",
       headers: { "content-type": "application/json" },

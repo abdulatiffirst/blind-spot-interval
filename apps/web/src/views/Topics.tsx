@@ -10,6 +10,9 @@ export function TopicsView({
   loading,
   loadFailed,
   retry,
+  hasMore,
+  loadMore,
+  loadingMore,
   tags,
   query,
   setQuery,
@@ -27,6 +30,9 @@ export function TopicsView({
   loading: boolean;
   loadFailed: boolean;
   retry: () => void;
+  hasMore: boolean;
+  loadMore: () => void;
+  loadingMore: boolean;
   tags: string[];
   query: string;
   setQuery: (s: string) => void;
@@ -89,12 +95,10 @@ export function TopicsView({
           {translate("archived")}
         </label>
       </div>
-      {loading ? (
-        loadFailed ? (
-          <Button onClick={retry}>{translate("retry")}</Button>
-        ) : (
-          <Skeleton section="Topics" compact />
-        )
+      {loadFailed && !filtered.length ? (
+        <Button onClick={retry}>{translate("retry")}</Button>
+      ) : loading ? (
+        <Skeleton section="Topics" compact />
       ) : filtered.length ? (
         <div className="topic-grid">
           {filtered.map((t) => (
@@ -152,6 +156,13 @@ export function TopicsView({
             !archived && <p>{translate("emptyTopicsCopy")}</p>
           )}
         </div>
+      )}
+      {hasMore && (
+        <Button onClick={loadMore} disabled={loadingMore}>
+          {translate(
+            loadingMore ? "loadingTopics" : loadFailed ? "retry" : "loadMore",
+          )}
+        </Button>
       )}
     </>
   );

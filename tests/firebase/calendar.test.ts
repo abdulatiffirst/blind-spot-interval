@@ -9,7 +9,6 @@ import {
   details,
   editTopic,
   reschedule,
-  digest,
 } from "../../functions/src/domain.ts";
 import {
   CalendarSync,
@@ -308,15 +307,15 @@ it("validates and deduplicates webhook notifications without trusting an event p
     "x-goog-message-number": "1",
   };
   await webhook(headers);
+  const outbox = db
+    .collection("syncJobs")
+    .where("uid", "==", uid)
+    .where("type", "==", "inbound");
+  const first = (await outbox.get()).docs.map((doc) => doc.id);
+  expect(first.length).toBeGreaterThan(0);
   await webhook(headers);
-  expect(
-    (
-      await db
-        .collection("syncJobs")
-        .doc(digest(`webhook:${channel}:1`))
-        .get()
-    ).exists,
-  ).toBe(true);
+  expect((await outbox.get()).docs.map((doc) => doc.id)).toEqual(first);
+  expect((await sync.connection())?.channel_message).toBe("1");
   await expect(
     webhook({ ...headers, "x-goog-channel-token": "forged" }),
   ).rejects.toMatchObject({ statusCode: 403 });
@@ -463,4 +462,43 @@ it("rejects expired OAuth state without contacting Google", async () => {
     statusCode: 400,
   });
   await db.collection("oauthStates").doc(hash(state)).delete();
+});
+
+it("coalesces webhook work while an inbound job is pending and ignores replayed numbers", async () => {
+  const ref = db.collection("calendarConnections").doc(uid);
+  const channel = random(),
+    token = random(),
+    job = random();
+  const generation = (await ref.get()).get("generation");
+  const queued = db.collection("syncJobs").doc(job);
+  await queued.create({
+    uid,
+    generation,
+    type: "inbound",
+    status: "pending",
+    attempts: 0,
+    retryAt: Date.now() + 60 * 60_000,
+  });
+  await ref.update({
+    connected: true,
+    channel_id: channel,
+    channel_token: hash(token),
+    resource_id: "resource",
+    channel_message: null,
+    inboundJobId: job,
+  });
+  const deliver = (number: string) =>
+    webhook({
+      "x-goog-channel-id": channel,
+      "x-goog-channel-token": token,
+      "x-goog-resource-id": "resource",
+      "x-goog-message-number": number,
+    });
+  await deliver("3");
+  await deliver("1");
+  await deliver("4");
+  const next = await ref.get();
+  expect(next.get("inboundJobId")).toBe(job);
+  expect(next.get("channel_message")).toBe("4");
+  expect((await queued.get()).get("attempts")).toBe(0);
 });

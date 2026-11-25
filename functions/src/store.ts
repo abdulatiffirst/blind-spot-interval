@@ -2,6 +2,8 @@ import { getApps, initializeApp } from "firebase-admin/app";
 import {
   getFirestore,
   type DocumentData,
+  type DocumentSnapshot,
+  type Query,
   type Transaction,
 } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
@@ -29,6 +31,39 @@ export async function all(uid: string, name: string): Promise<RecordData[]> {
   const rows = await collection(uid, name).get();
   return rows.docs.map((d) => ({ ...d.data()!, id: d.id }));
 }
+export const records = (
+  snapshot: FirebaseFirestore.QuerySnapshot,
+): RecordData[] => snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id }));
+
+export const pendingSchedules = (ref: FirebaseFirestore.CollectionReference) =>
+  ref.where("status", "==", "pending");
+
+export async function getByIds(
+  uid: string,
+  name: string,
+  ids: (string | undefined)[],
+  tx?: Transaction,
+) {
+  const unique = [...new Set(ids.filter((id): id is string => !!id))];
+  const docs: DocumentSnapshot[] = [];
+  for (let offset = 0; offset < unique.length; offset += 250) {
+    const refs = unique
+      .slice(offset, offset + 250)
+      .map((id) => collection(uid, name).doc(id));
+    docs.push(...(await (tx ? tx.getAll(...refs) : db.getAll(...refs))));
+  }
+  return new Map(
+    docs
+      .filter((doc) => doc.exists)
+      .map((doc) => [doc.id, { ...doc.data(), id: doc.id } as RecordData]),
+  );
+}
+
+export type Rows = (
+  name: string,
+  query?: (ref: FirebaseFirestore.CollectionReference) => Query,
+) => Promise<RecordData[]>;
+
 export type MutationGuard = (
   tx: Transaction,
 ) => Promise<(result: unknown) => void>;
@@ -40,12 +75,7 @@ export async function mutate<T>(
   fn: (
     tx: Transaction,
     read: (name: string, id: string) => Promise<RecordData | null>,
-    rows: (
-      name: string,
-      query?: (
-        ref: FirebaseFirestore.CollectionReference,
-      ) => FirebaseFirestore.Query,
-    ) => Promise<RecordData[]>,
+    rows: Rows,
     root: RecordData,
   ) => Promise<T>,
   guard?: MutationGuard,
