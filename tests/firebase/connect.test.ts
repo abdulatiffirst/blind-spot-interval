@@ -15,6 +15,8 @@ import { auth, db } from "../../functions/src/store.ts";
 import { digest } from "../../functions/src/domain.ts";
 import { defaults } from "../../packages/shared/src/index.ts";
 import { createHash, randomBytes } from "node:crypto";
+import { once } from "node:events";
+import { createApp } from "../../functions/src/http.ts";
 
 const origin = process.env.BLIND_SPOT_CONNECT_ORIGIN ?? "http://localhost:5000";
 const resource = origin + "/api/mcp";
@@ -48,7 +50,7 @@ const authorize = (
   verifier = opaque(),
   additions: Record<string, string> = {},
 ) => {
-  const state = opaque();
+  const state = additions.state ?? opaque();
   const query = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirect,
@@ -70,7 +72,7 @@ async function consent(
   scope: string[],
   user = alice,
   selected = scope,
-  client?: { client_id: string; redirect_uri: string },
+  client?: { client_id: string; redirect_uri: string; state?: string },
 ) {
   const { response, verifier, state } = authorize(scope, opaque(), client);
   const auth = await response;
@@ -529,6 +531,71 @@ describe.skipIf(process.env.BLIND_SPOT_CONNECT_ENABLED !== "true")(
       }
     });
 
+    it("round-trips a long Gemini state without changing the decoded value", async () => {
+      const callback =
+        "https://oauth-redirect.googleusercontent.com/r/synthetic-gemini";
+      const registry = db.doc("mcpConfiguration/gemini");
+      await registry.set({ redirect_uris: [callback] });
+      try {
+        const response = await register([callback], "client_secret_post");
+        expect(response.status).toBe(201);
+        const client = await response.json();
+        const state = "gemini+" + "a".repeat(5800) + "/= %&ю";
+        const { url } = await consent(["topics:read"], alice, undefined, {
+          client_id: client.client_id,
+          redirect_uri: callback,
+          state,
+        });
+        expect(url.searchParams.get("state")).toBe(state);
+      } finally {
+        await registry.delete();
+      }
+    });
+
+    it("preserves Claude public-client OAuth and safely rejects invalid authorization parameters", async () => {
+      const callback = "https://claude.ai/api/mcp/auth_callback";
+      const registration = await register([callback], "none");
+      expect(registration.status).toBe(201);
+      const client = await registration.json();
+      const identity = { client_id: client.client_id, redirect_uri: callback };
+      const cases = [
+        [{ redirect_uri: callback + "-wrong" }, "invalid_redirect_uri"],
+        [{ code_challenge_method: "plain" }, "invalid_pkce_challenge"],
+        [{ code_challenge: "invalid" }, "invalid_pkce_challenge"],
+        [{ state: "" }, "missing_state"],
+        [{ state: "s".repeat(6001) }, "oversized_state"],
+        [{ state: "ю".repeat(1001) }, "oversized_state"],
+      ] as const;
+      for (const [additions, reason] of cases) {
+        const rejected = await authorize(["topics:read"], opaque(), {
+          ...identity,
+          ...additions,
+        }).response;
+        if (reason === "invalid_redirect_uri" || reason === "oversized_state") {
+          expect(rejected.status).toBe(400);
+          expect(rejected.headers.has("location")).toBe(false);
+          expect(await rejected.json()).toEqual({
+            error: "invalid_request",
+            reason,
+          });
+        } else {
+          expect(rejected.status).toBe(302);
+          const location = new URL(rejected.headers.get("location")!);
+          expect(location.origin + location.pathname).toBe(callback);
+          expect(location.searchParams.get("error")).toBe("invalid_request");
+        }
+      }
+      const { code, verifier } = await consent(
+        ["topics:read"],
+        alice,
+        undefined,
+        identity,
+      );
+      const tokens = await exchange(code, verifier, identity);
+      expect(tokens.status).toBe(200);
+      await api("/connect/revoke", alice, { clientId: client.client_id });
+    });
+
     it("enforces S256, exact token redirects, resource binding, one-use codes, refresh rotation and immediate replay revocation", async () => {
       const { code, verifier } = await consent(["topics:read"]);
       for (const response of [
@@ -872,6 +939,271 @@ describe.skipIf(process.env.BLIND_SPOT_CONNECT_ENABLED !== "true")(
       }
     }, 120_000);
 
+    it("applies authorized writes once, keeps existing confirmations and records automatic execution", async () => {
+      const user = await signInAsEmulatedGoogleUser(origin);
+      const tokens = await connect(scopes, user);
+      const client = await sdk(tokens.access_token);
+      const permissions = await api("/connect/applications", user).then(
+        (response) => response.json(),
+      );
+      const grant = permissions.applications[0];
+      expect(grant).toMatchObject({ clientId, approvalMode: "ask" });
+      const approval = (
+        approvalMode: "ask" | "allow",
+        who: { uid: string; token: string } = user,
+      ) =>
+        api("/connect/applications/approval", who, {
+          clientId,
+          grantId: grant.grantId,
+          approvalMode,
+        });
+      try {
+        const pendingArgs = {
+          title: "Pending across mode change",
+          idempotencyKey: key(),
+        };
+        const pending = await run(client, "create_topic", pendingArgs);
+        expect(pending.state).toBe("confirmation_required");
+        expect((await approval("allow", bob)).status).toBe(404);
+        expect(
+          (
+            await approval("allow", {
+              uid: user.uid,
+              token: tokens.access_token,
+            })
+          ).status,
+        ).toBe(401);
+        expect((await approval("allow")).status).toBe(200);
+        expect(await run(client, "create_topic", pendingArgs)).toEqual(pending);
+
+        const create = {
+          title: "Automatically applied topic",
+          idempotencyKey: key(),
+        };
+        const attempts = await Promise.all([
+          run(client, "create_topic", create),
+          run(client, "create_topic", create),
+        ]);
+        expect(attempts[0]).toMatchObject({
+          state: "applied",
+          result: { title: create.title },
+        });
+        expect(attempts[1]).toEqual(attempts[0]);
+        const first = attempts[0].result.firstReview;
+        const at = DateTime.fromISO(first.scheduledAt)
+          .plus({ minutes: 5 })
+          .toISO()!;
+        const move = {
+          reviewId: first.id,
+          scheduledAt: at,
+          idempotencyKey: key(),
+        };
+        expect(await run(client, "reschedule_review", move)).toMatchObject({
+          state: "applied",
+          result: {
+            review: { id: first.id, scheduledAt: new Date(at).toISOString() },
+          },
+        });
+        const occupied = await run(client, "create_topic", {
+          title: "Another pending review",
+          idempotencyKey: key(),
+        });
+        const conflict = {
+          ...move,
+          scheduledAt: occupied.result.firstReview.scheduledAt,
+          idempotencyKey: key(),
+        };
+        expect(conflict.scheduledAt).toBeTruthy();
+        const staged = await run(client, "reschedule_review", conflict);
+        expect(staged).toMatchObject({
+          state: "confirmation_required",
+          preview: {
+            warnings: expect.arrayContaining([
+              "Manual time overlaps another review.",
+            ]),
+          },
+        });
+        expect(
+          (
+            await api(actionPath(staged.confirmationUrl), user, {
+              allow: false,
+            })
+          ).status,
+        ).toBe(200);
+
+        const complete = {
+          reviewId: first.id,
+          rating: 3,
+          idempotencyKey: key(),
+        };
+        const done = await run(client, "complete_review", complete);
+        expect(done).toMatchObject({
+          state: "applied",
+          result: { review: { id: first.id, rating: 3 } },
+        });
+        expect(await run(client, "complete_review", complete)).toEqual(done);
+        for (const [name, args] of [
+          ["create_topic", create],
+          ["reschedule_review", move],
+          ["complete_review", complete],
+        ] as const) {
+          const id = digest(
+            JSON.stringify([user.uid, clientId, name, args.idempotencyKey]),
+          );
+          expect(
+            (await db.collection("mcpActions").doc(id).get()).data(),
+          ).toMatchObject({
+            state: "approved",
+            executionMode: "automatic",
+          });
+        }
+        expect(
+          (
+            await db
+              .collection("users")
+              .doc(user.uid)
+              .collection("topics")
+              .get()
+          ).size,
+        ).toBe(2);
+        expect(
+          (
+            await db
+              .collection("users")
+              .doc(user.uid)
+              .collection("reviewHistory")
+              .get()
+          ).size,
+        ).toBe(1);
+        expect((await approval("ask")).status).toBe(200);
+        expect(
+          await run(client, "create_topic", {
+            ...create,
+            idempotencyKey: key(),
+          }),
+        ).toMatchObject({ state: "confirmation_required" });
+        expect(
+          (
+            await api(actionPath(pending.confirmationUrl), user, {
+              allow: true,
+            })
+          ).status,
+        ).toBe(200);
+        expect(await run(client, "create_topic", pendingArgs)).toMatchObject({
+          state: "applied",
+        });
+        expect((await approval("allow")).status).toBe(200);
+        const replacement = await connect(["topics:read"], user);
+        expect((await mcp(tokens.access_token)).status).toBe(401);
+        expect((await approval("allow")).status).toBe(404);
+        const { applications } = await api("/connect/applications", user).then(
+          (response) => response.json(),
+        );
+        expect(applications).toMatchObject([
+          { clientId, approvalMode: "ask", scopes: ["topics:read"] },
+        ]);
+        expect(
+          (
+            await api("/connect/applications/approval", user, {
+              clientId,
+              grantId: applications[0].grantId,
+              approvalMode: "allow",
+            })
+          ).status,
+        ).toBe(403);
+        const readClient = await sdk(replacement.access_token);
+        try {
+          await expect(
+            readClient.callTool({ name: "create_topic", arguments: create }),
+          ).rejects.toThrow();
+        } finally {
+          await readClient.close();
+        }
+
+        const expiring = await connect(scopes, user);
+        const freshGrant = (
+          await api("/connect/applications", user).then((response) =>
+            response.json(),
+          )
+        ).applications[0];
+        expect(
+          (
+            await api("/connect/applications/approval", user, {
+              clientId,
+              grantId: freshGrant.grantId,
+              approvalMode: "allow",
+            })
+          ).status,
+        ).toBe(200);
+        await db
+          .collection("mcpAccounts")
+          .doc(user.uid)
+          .update(`grants.${digest(clientId)}.expires`, Date.now() - 1);
+        expect((await mcp(expiring.access_token)).status).toBe(401);
+
+        const revoking = await connect(scopes, user);
+        const revokingGrant = (
+          await api("/connect/applications", user).then((response) =>
+            response.json(),
+          )
+        ).applications[0];
+        expect(
+          (
+            await api("/connect/applications/approval", user, {
+              clientId,
+              grantId: revokingGrant.grantId,
+              approvalMode: "allow",
+            })
+          ).status,
+        ).toBe(200);
+        expect((await api("/connect/revoke", user, { clientId })).status).toBe(
+          200,
+        );
+        expect((await mcp(revoking.access_token)).status).toBe(401);
+      } finally {
+        await client.close();
+      }
+    }, 60_000);
+
+    it("blocks automatic approval changes when global writes are disabled", async () => {
+      await connect(["topics:read", "topics:write"], bob);
+      const { applications } = await api("/connect/applications", bob).then(
+        (response) => response.json(),
+      );
+      const grant = applications[0];
+      const prior = process.env.BLIND_SPOT_CONNECT_WRITES;
+      process.env.BLIND_SPOT_CONNECT_WRITES = "false";
+      const server = createApp().listen(0, "127.0.0.1");
+      process.env.BLIND_SPOT_CONNECT_WRITES = prior;
+      try {
+        await once(server, "listening");
+        const address = server.address();
+        if (!address || typeof address === "string")
+          throw new Error("Expected a loopback HTTP server");
+        const response = await fetch(
+          "http://127.0.0.1:" +
+            address.port +
+            "/api/v1/connect/applications/approval",
+          {
+            method: "POST",
+            headers: {
+              origin,
+              authorization: "Bearer " + bob.token,
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({
+              clientId,
+              grantId: grant.grantId,
+              approvalMode: "allow",
+            }),
+          },
+        );
+        expect(response.status).toBe(403);
+      } finally {
+        server.close();
+      }
+    });
+
     it("isolates accounts and invalidates previously issued tokens on first-party and OAuth revocation", async () => {
       const tokens = await connect(scopes, bob);
       const client = await sdk(tokens.access_token);
@@ -901,7 +1233,7 @@ describe.skipIf(process.env.BLIND_SPOT_CONNECT_ENABLED !== "true")(
         expect(apps.applications).toMatchObject([{ clientId, scopes }]);
         expect(apps.platforms).toEqual({
           chatgpt: false,
-          claude: false,
+          claude: true,
           gemini: false,
           other: true,
         });

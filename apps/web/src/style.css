@@ -2104,6 +2104,28 @@ summary {
   scroll-margin-top: 7rem;
 }
 
+.connect-approval {
+  display: grid;
+  gap: 6px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  font-size: 13px;
+}
+
+.connect-approval label {
+  display: grid;
+  gap: 6px;
+}
+
+.connect-approval select {
+  width: 100%;
+  min-width: 0;
+}
+
+.connect-approval p {
+  color: var(--muted);
+}
+
 .connect-application:target {
   border-color: var(--violet);
 }

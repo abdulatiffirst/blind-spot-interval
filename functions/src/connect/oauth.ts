@@ -16,7 +16,10 @@ import { z } from "zod";
 import { digest } from "../domain.ts";
 import { auth, db, fail, type RecordData } from "../store.ts";
 import { emulator } from "../calendar.ts";
-import { connectPlatformForHost } from "../../../packages/shared/src/connect-platforms.ts";
+import {
+  connectPlatformForHost,
+  type ConnectApprovalMode,
+} from "../../../packages/shared/src/connect-platforms.ts";
 
 export const scopes = [
   "topics:read",
@@ -28,6 +31,18 @@ export const scopes = [
 export type Scope = (typeof scopes)[number];
 export const scopeSchema = z.enum(scopes);
 export const secret = () => randomBytes(32).toString("base64url");
+// Firebase Hosting rejected an 8 KiB request target. Budget for form encoding
+// and leave room for the other OAuth parameters and the callback URL.
+const maxEncodedState = 6000;
+export function authorizationStateError(state: unknown) {
+  if (typeof state !== "string" || !state) return "missing_state";
+  if (
+    state.length > maxEncodedState ||
+    new URLSearchParams({ state }).toString().length - "state=".length >
+      maxEncodedState
+  )
+    return "oversized_state";
+}
 export const handle = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 const clientId = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 export const clientAuthMethods = [
@@ -55,6 +70,7 @@ export type Grant = {
   scopes: Scope[];
   connectedAt: string;
   expires: number;
+  approvalMode?: ConnectApprovalMode;
 };
 export type Principal = {
   uid: string;
@@ -85,8 +101,15 @@ function saveGrants(
     });
   else tx.delete(ref);
 }
+export function matchingGrant(
+  row: RecordData | undefined,
+  p: Pick<Principal, "clientId" | "grantId">,
+) {
+  const grant = getGrant(row, p.clientId);
+  if (grant?.id === p.grantId) return grant;
+}
 export function activeGrant(row: RecordData | undefined, p: Principal) {
-  return getGrant(row, p.clientId)?.id === p.grantId;
+  return !!matchingGrant(row, p);
 }
 export async function limit(key: string, maximum: number) {
   const minute = Math.floor(Date.now() / 60000);
@@ -401,8 +424,7 @@ export function oauth(settings: Config) {
       if (
         !client.redirect_uris.includes(params.redirectUri) ||
         !handle.safeParse(params.codeChallenge).success ||
-        !params.state ||
-        params.state.length > 1024
+        authorizationStateError(params.state)
       )
         throw new InvalidRequestError(
           "A registered redirect URI, S256 challenge and state are required",
@@ -665,13 +687,36 @@ export async function listGrants(uid: string) {
   const row = (await account(uid).get()).data();
   return (Object.values(row?.grants ?? {}) as Grant[])
     .filter((grant) => grant.expires > Date.now())
-    .map(({ clientId, name, host, scopes, connectedAt }) => ({
+    .map(({ id, clientId, name, host, scopes, connectedAt, approvalMode }) => ({
+      grantId: id,
+      approvalMode: approvalMode ?? "ask",
       clientId,
       name,
       host,
       scopes,
       connectedAt,
     }));
+}
+export async function setApprovalMode(
+  uid: string,
+  clientId: string,
+  grantId: string,
+  approvalMode: ConnectApprovalMode,
+) {
+  const owner = account(uid);
+  await db.runTransaction(async (tx) => {
+    const data = (await tx.get(owner)).data();
+    const grant = matchingGrant(data, { clientId, grantId });
+    if (!grant) fail(404, "Application grant is unavailable");
+    if (
+      approvalMode === "allow" &&
+      !grant.scopes.some((scope) => scope.endsWith(":write"))
+    )
+      fail(403, "Write permissions are required");
+    tx.update(owner, `grants.${digest(clientId)}.approvalMode`, approvalMode);
+  });
+  audit("approval_mode_" + approvalMode, uid, clientId);
+  return { approvalMode };
 }
 export async function revoke(uid: string, client?: string, expected?: string) {
   const owner = account(uid);
