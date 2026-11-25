@@ -18,7 +18,19 @@ jobs:
       - run: npm run test:firebase
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+        env:
+          CONNECT_UX_SCREENSHOTS: "true"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: connect-disabled-screenshots
+          path: test-results/connect-*/settings-disabled-*.png
       - run: npm run test:connect
+        env:
+          CONNECT_UX_SCREENSHOTS: "true"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: connect-enabled-screenshots
+          path: test-results/connect-*/*.png
       - uses: actions/upload-artifact@v4
         if: failure()
         with: { name: firebase-test-results, path: test-results/ }

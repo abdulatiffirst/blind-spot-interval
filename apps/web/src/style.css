@@ -1924,70 +1924,499 @@ summary {
   }
 }
 
-.connect-flow {
-  width: min(100% - 2rem, 44rem);
-  margin: 2rem auto;
+.connect-settings {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 20px;
 }
 
-.connect-flow > header {
+.connect-settings-header,
+.connect-flow-header,
+.connect-app-summary,
+.connect-applications-header,
+.connect-platform-top,
+.connect-signed-in {
+  display: flex;
+  align-items: center;
   justify-content: space-between;
-  margin-bottom: 1rem;
+  gap: 14px;
 }
 
-.connect-card {
-  overflow-wrap: anywhere;
-}
-
-.connect-card > .inline,
-.connect-flow > header {
+.connect-settings-header {
+  justify-content: flex-start;
+  align-items: flex-start;
   flex-wrap: wrap;
 }
 
-.connect-card h2 {
-  margin-bottom: 0;
+.connect-settings-header > div {
+  flex: 1 1 14rem;
 }
 
-.connect-flow fieldset,
-.connect-application {
-  margin-block: 1rem;
-  padding: 1rem;
-  border: 1px solid currentColor;
-  border-radius: 0.5rem;
+.connect-settings h2,
+.connect-settings h3,
+.connect-settings h4,
+.connect-flow h2 {
+  margin: 0;
 }
 
-.connect-card .connect-scope {
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
-  margin-block: 0.5rem;
+.connect-settings-header p,
+.connect-platform p,
+.connect-app-identity p,
+.connect-sharing,
+.connect-request-identity p,
+.connect-flow-heading p,
+.connect-flow-card .connect-sign-in p {
+  color: var(--muted);
+  font-size: 14px;
 }
 
-.connect-card .connect-scope input {
-  width: auto;
+.connect-settings-header p,
+.connect-platform p,
+.connect-request-identity p {
+  margin-top: 4px;
 }
 
-.connect-card details {
-  margin-block: 1rem;
+.connect-symbol,
+.connect-platform-icon {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  border-radius: 11px;
+  width: 44px;
+  height: 44px;
 }
 
-.connect-card summary {
-  cursor: pointer;
+.connect-symbol {
+  color: #182200;
+  background: var(--lime);
 }
 
-.connect-card ul {
-  padding-inline-start: 1.25rem;
-  list-style: disc;
+.connect-platform-icon {
+  color: var(--text);
+  border: 1px solid var(--border);
+  background: var(--panel);
+  width: 40px;
+  height: 40px;
 }
 
-.connect-card dl > div {
-  margin-block: 0.5rem;
+.connect-jump,
+.connect-docs {
+  align-self: start;
 }
 
-.connect-card dt {
+.connect-grid,
+.connect-grants {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.connect-platform,
+.connect-application,
+.connect-placeholder {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: clamp(14px, 2vw, 20px);
+}
+
+.connect-platform {
+  background: var(--soft);
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 12px;
+}
+
+.connect-platform-top,
+.connect-app-summary {
+  align-items: flex-start;
+}
+
+.connect-platform .button,
+.connect-application .button {
+  justify-self: start;
+}
+
+.connect-settings .button,
+.connect-flow .button,
+.connect-dialog-body .button {
+  white-space: normal;
+  text-align: center;
+}
+
+.connect-badge {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  display: inline-block;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 4px 9px;
+  text-align: center;
+}
+
+.connect-badge.active,
+.connect-notice.success {
+  background: color-mix(in srgb, var(--lime) 20%, var(--panel));
+  border-color: color-mix(in srgb, var(--lime) 35%, var(--border));
+}
+
+.connect-platform .connect-access-summary {
+  color: var(--text);
+  font-size: 12px;
   font-weight: 600;
 }
 
-.connect-card dd {
+.settings-card .connect-manual-note {
+  margin: 0;
+}
+
+.connect-applications {
+  display: grid;
+  gap: 12px;
+}
+
+.connect-applications-header h3,
+.connect-advanced summary,
+.connect-back {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.connect-applications-header {
+  flex-wrap: wrap;
+}
+
+.connect-applications-header h3 {
+  scroll-margin-top: 7rem;
+}
+
+.connect-application {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  scroll-margin-top: 7rem;
+}
+
+.connect-application:target {
+  border-color: var(--violet);
+}
+
+.connect-application h4 {
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.connect-app-identity {
+  min-width: 0;
+}
+
+.connect-app-identity p,
+.connect-granted,
+.connect-empty {
+  font-size: 13px;
+}
+
+.connect-empty {
+  color: var(--muted);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.connect-granted ul,
+.connect-notice ul {
+  list-style: disc;
+  padding-inline-start: 1.25rem;
+  margin-top: 5px;
+}
+
+.connect-granted li + li,
+.connect-steps li + li {
+  margin-top: 5px;
+}
+
+.settings-card .connect-advanced {
+  padding-top: 12px;
+  margin: 0;
+}
+
+.connect-advanced summary {
+  width: fit-content;
+  font-weight: 600;
+  list-style: none;
+}
+
+.connect-advanced summary::-webkit-details-marker {
+  display: none;
+}
+
+.connect-advanced[open] summary svg {
+  transform: rotate(180deg);
+}
+
+.connect-advanced > p {
+  color: var(--muted);
+  font-size: 13px;
+  margin-block: 10px;
+}
+
+.connect-address {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.connect-address label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.connect-address input {
+  margin: 0;
+  min-width: 0;
+}
+
+.connect-address p {
+  grid-column: 1 / -1;
+  font-size: 13px;
+}
+
+.connect-dialog-body,
+.connect-flow-card,
+.connect-sign-in,
+.connect-action-details {
+  display: grid;
+  gap: 16px;
+}
+
+.connect-dialog-body {
+  padding: 20px 24px 24px;
+  font-size: 14px;
+}
+
+.connect-steps {
+  list-style: decimal;
+  padding-inline-start: 1.4rem;
+  line-height: 1.6;
+}
+
+.connect-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--soft);
+  font-size: 13px;
+}
+
+.connect-notice > svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.connect-notice.error {
+  border-color: color-mix(in srgb, #c34737 38%, var(--border));
+}
+
+.connect-notice .button {
+  margin-top: 8px;
+}
+
+.connect-placeholder {
+  display: grid;
+  gap: 10px;
+}
+
+.connect-placeholder span {
+  display: block;
+  border-radius: 5px;
+  width: 60%;
+  height: 10px;
+  background: var(--soft);
+}
+
+.connect-placeholder span:last-child {
+  width: 40%;
+}
+
+.connect-placeholder .connect-placeholder-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+}
+
+.connect-flow {
+  width: min(100% - 2rem, 43rem);
+  margin: clamp(16px, 5vw, 48px) auto;
+  overflow-wrap: anywhere;
+}
+
+.connect-flow-header {
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.connect-platform-actions,
+.connect-header-controls,
+.connect-request-identity,
+.connect-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.connect-flow-header a,
+.connect-back {
+  text-decoration: none;
+}
+
+.connect-flow-heading h1 {
+  margin-block: 12px 5px;
+  font-size: clamp(25px, 4vw, 36px);
+  letter-spacing: -0.035em;
+}
+
+.connect-signed-in {
+  flex-wrap: wrap;
+  font-size: 13px;
+  background: var(--soft);
+  padding: 12px;
+  border-radius: 9px;
+}
+
+.connect-signed-in div {
+  display: grid;
+  min-width: 0;
+}
+
+.connect-signed-in span {
+  color: var(--muted);
+}
+
+.connect-permissions {
+  display: grid;
+  gap: 12px;
+}
+
+.connect-permissions fieldset {
+  min-width: 0;
+  padding: 8px 12px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+
+.connect-permissions legend {
+  padding-inline: 5px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.connect-permissions p {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 6px 6px 0;
+}
+
+.connect-scope {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 44px;
+  border-radius: 5px;
+  padding: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.connect-scope:hover {
+  background: var(--soft);
+}
+
+.connect-scope input[type="checkbox"] {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #617b16;
+}
+
+.connect-platform-actions {
+  flex-wrap: wrap;
+}
+
+.connect-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.connect-sign-in .connect-actions {
+  justify-content: flex-start;
+}
+
+.connect-back {
+  width: fit-content;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.connect-action-details dl {
+  border-top: 1px solid var(--border);
+}
+
+.connect-action-details dl > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr);
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+  padding-block: 9px;
+  font-size: 14px;
+}
+
+.connect-action-details dt {
+  color: var(--muted);
+}
+
+.connect-action-details dd {
   margin: 0;
   white-space: pre-wrap;
+}
+
+@container (max-width: 640px) {
+  .connect-grid,
+  .connect-grants {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .connect-address {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .connect-address .button {
+    justify-self: start;
+  }
+
+  .connect-flow-actions .button {
+    flex: 1 1 auto;
+  }
+
+  .connect-action-details dl > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
 }

@@ -7,6 +7,10 @@ import { config, scopes } from "../functions/src/connect/oauth.ts";
 import { prioritize } from "../functions/src/connect/reads.ts";
 import { toolsFor } from "../functions/src/connect/server.ts";
 import { createApp } from "../functions/src/http.ts";
+import {
+  connectPlatformForHost,
+  connectPlatformsForRedirects,
+} from "../packages/shared/src/connect-platforms.ts";
 
 const settings = {
   origin: "https://example.invalid",
@@ -157,4 +161,29 @@ describe("MCP schema and ranking contracts", () => {
       ],
     });
   });
+});
+
+it("identifies assistant setup from configured callback URLs and grants from their callback domains", () => {
+  expect(connectPlatformsForRedirects([])).toEqual({
+    chatgpt: false,
+    claude: false,
+    gemini: false,
+    other: false,
+  });
+  expect(
+    connectPlatformsForRedirects([
+      "https://chatgpt.com/connector/oauth/sample",
+      "https://claude.ai/api/mcp/auth_callback",
+      "https://oauth-redirect-sandbox.googleusercontent.com/r/sample",
+      "http://localhost:6274/oauth/callback",
+    ]),
+  ).toEqual({ chatgpt: true, claude: true, gemini: true, other: true });
+  expect(
+    connectPlatformsForRedirects(["https://claude.ai/settings/connectors"])
+      .claude,
+  ).toBe(false);
+  expect(connectPlatformForHost("chatgpt.com.example.invalid")).toBe("other");
+  expect(
+    connectPlatformForHost("oauth-redirect-test.googleusercontent.com"),
+  ).toBe("gemini");
 });

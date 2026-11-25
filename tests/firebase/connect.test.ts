@@ -638,6 +638,12 @@ describe.skipIf(process.env.BLIND_SPOT_CONNECT_ENABLED !== "true")(
           response.json(),
         );
         expect(apps.applications).toMatchObject([{ clientId, scopes }]);
+        expect(apps.platforms).toEqual({
+          chatgpt: false,
+          claude: false,
+          gemini: false,
+          other: true,
+        });
         expect((await api("/connect/revoke", bob, { clientId })).status).toBe(
           200,
         );

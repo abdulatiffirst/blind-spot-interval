@@ -5,9 +5,11 @@ import {
   getLanguage,
   setLanguage,
   type MessageKey,
+  type Language,
 } from "./i18n";
 import { LanguageSwitch } from "./i18n/LanguageSwitch";
 import { Skeleton } from "./Skeleton";
+import { ConnectLoading } from "./connect-ui";
 import {
   firebaseAuth,
   usesFirebase,
@@ -150,7 +152,7 @@ async function dashboardData(
 }
 
 const ConnectFlow = lazy(() =>
-  import("./Connect").then(({ ConnectFlow }) => ({ default: ConnectFlow })),
+  import("./ConnectFlow").then(({ ConnectFlow }) => ({ default: ConnectFlow })),
 );
 const ConnectSettings = lazy(() =>
   import("./Connect").then(({ ConnectSettings }) => ({
@@ -579,17 +581,53 @@ function App() {
   const today = dashboard?.today ?? [];
   const upcoming = dashboard?.upcoming ?? [];
   const filtered = topicPages.data?.pages.flatMap((page) => page.items) ?? [];
+  async function chooseLanguage(next: Language) {
+    setLanguage(next);
+    if (!user) return;
+    const signal = session.current;
+    setSavingLanguage(true);
+    setError((current) => (current === "languageSync" ? "" : current));
+    try {
+      await api(
+        "/preferences/language",
+        "PATCH",
+        { language: next },
+        {
+          signal: signal ?? undefined,
+          user: identity ?? undefined,
+        },
+      );
+    } catch {
+      if (!signal?.aborted) setError("languageSync");
+    } finally {
+      if (!signal?.aborted) setSavingLanguage(false);
+    }
+  }
   if (usesFirebase && connectFlow)
     return (
-      <Suspense fallback={null}>
+      <Suspense
+        fallback={
+          <main className="connect-flow">
+            <ConnectLoading />
+          </main>
+        }
+      >
         <ConnectFlow
+          key={user?.id ?? "signed-out"}
           mode={connectFlow}
+          accountId={user?.id}
+          identity={identity ?? undefined}
           email={user?.email}
           loading={loading}
           signingIn={signingIn}
-          error={!!error}
+          error={error}
+          dark={dark}
+          savingLanguage={savingLanguage}
+          onLanguageChange={chooseLanguage}
+          onToggleTheme={() => setDark((previous) => !previous)}
           onSignIn={signIn}
           onSignOut={signOut}
+          onRetrySignIn={() => setSessionAttempt((attempt) => attempt + 1)}
         />
       </Suspense>
     );
@@ -711,23 +749,7 @@ function App() {
             <div className="top-actions">
               <LanguageSwitch
                 disabled={savingLanguage}
-                onSelect={async (next) => {
-                  const signal = session.current;
-                  setLanguage(next);
-                  setSavingLanguage(true);
-                  try {
-                    await api(
-                      "/preferences/language",
-                      "PATCH",
-                      { language: next },
-                      { signal: signal ?? undefined },
-                    );
-                  } catch {
-                    if (!signal?.aborted) setError("languageSync");
-                  } finally {
-                    if (!signal?.aborted) setSavingLanguage(false);
-                  }
-                }}
+                onSelect={chooseLanguage}
               />
               <Button
                 className="icon-button"
@@ -984,12 +1006,22 @@ function App() {
                       </Button>
                     </div>
                   </div>
+                  {usesFirebase && (
+                    <Suspense
+                      fallback={
+                        <div className="settings-card connect-settings">
+                          <ConnectLoading grid />
+                        </div>
+                      }
+                    >
+                      <ConnectSettings
+                        key={user.id}
+                        accountId={user.id}
+                        identity={identity ?? undefined}
+                      />
+                    </Suspense>
+                  )}
                 </div>
-                {usesFirebase && (
-                  <Suspense fallback={null}>
-                    <ConnectSettings key={user.id} />
-                  </Suspense>
-                )}
               </>
             )}
           </main>

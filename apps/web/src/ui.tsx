@@ -23,16 +23,21 @@ export function Dialog({
   description,
   children,
   onClose,
+  busy = false,
 }: {
   title: string;
   description: string;
   children: ReactNode;
   onClose: () => void;
+  busy?: boolean;
 }) {
   const error = useContext(ErrorContext);
   const returnFocus = useRef(document.activeElement as HTMLElement | null);
   return (
-    <DialogPrimitive.Root open onOpenChange={(open) => !open && onClose()}>
+    <DialogPrimitive.Root
+      open
+      onOpenChange={(open) => !open && !busy && onClose()}
+    >
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="overlay" />
         <DialogPrimitive.Content
@@ -72,7 +77,7 @@ export function Dialog({
                 {description}
               </DialogPrimitive.Description>
             </div>
-            <DialogPrimitive.Close asChild>
+            <DialogPrimitive.Close asChild disabled={busy}>
               <Button
                 className="icon-button"
                 aria-label={translate("closeDialog")}
