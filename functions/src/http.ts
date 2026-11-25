@@ -4,6 +4,8 @@ import { DateTime } from "luxon";
 import { auth, db, all, fail } from "./store.ts";
 import * as domain from "./domain.ts";
 import * as calendar from "./calendar.ts";
+import { mountAccount, mountPublic } from "./connect/server.ts";
+import { config, type Config } from "./connect/oauth.ts";
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 const cookie = (text: string | undefined, name: string) =>
   text
@@ -18,20 +20,34 @@ function safe(fn: express.RequestHandler): express.RequestHandler {
 }
 export function createApp() {
   const app = express();
+  let connect: Config | null = null;
+  try {
+    connect = config();
+  } catch {
+    console.error(
+      "Blind Spot Connect disabled because its configuration is invalid",
+    );
+  }
   app.disable("x-powered-by");
   app.use(express.json({ limit: "300kb" }));
   app.use((req, res, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Cache-Control", "no-store");
     const origin = req.headers.origin;
-    if (origin && origin !== calendar.origin())
+    const connectRequest =
+      req.path === "/api/mcp" ||
+      req.path.startsWith("/api/v1/connect/") ||
+      ["/authorize", "/token", "/revoke", "/register"].includes(req.path) ||
+      req.path.startsWith("/.well-known/oauth-");
+    const firstParty = connectRequest ? connect?.origin : undefined;
+    if (origin && origin !== (firstParty ?? calendar.origin()))
       return res.status(403).json({ error: "Origin not allowed" });
     if (origin) {
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Vary", "Origin");
       res.setHeader(
         "Access-Control-Allow-Headers",
-        "Authorization,Content-Type,Idempotency-Key",
+        "Authorization,Content-Type,Idempotency-Key,Mcp-Protocol-Version,Mcp-Method,Mcp-Name,Mcp-Session-Id,Last-Event-ID",
       );
       res.setHeader(
         "Access-Control-Allow-Methods",
@@ -41,6 +57,7 @@ export function createApp() {
     if (req.method === "OPTIONS") return res.sendStatus(204);
     next();
   });
+  mountPublic(app, connect);
   app.get(
     "/health",
     safe(async (_req, res) => {
@@ -110,6 +127,7 @@ export function createApp() {
       }
     }),
   );
+  mountAccount(app, connect);
   app.get(
     "/api/v1/me",
     safe(async (_req, res) => {

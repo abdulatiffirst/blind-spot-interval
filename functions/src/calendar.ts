@@ -478,23 +478,40 @@ export class CalendarSync {
         last_sync_at: new Date().toISOString(),
       });
   }
-  async freeBusy() {
+  async availability(
+    start: Date,
+    end: Date,
+  ): Promise<{ start: string; end: string }[] | undefined> {
     const c = await this.connection();
     if (!c) return;
-    const now = new Date();
     const data = await this.request("freeBusy", {
       method: "POST",
       body: {
-        timeMin: now.toISOString(),
-        timeMax: new Date(Date.now() + 32 * 86400000).toISOString(),
+        timeMin: start.toISOString(),
+        timeMax: end.toISOString(),
         items: [{ id: "primary" }],
       },
     });
-    if (data.calendars?.primary?.errors?.length)
+    const primary = data.calendars?.primary;
+    if (
+      primary?.errors?.length ||
+      !Array.isArray(primary?.busy) ||
+      !primary.busy.every(
+        (item: any) =>
+          Number.isFinite(Date.parse(item?.start)) &&
+          Number.isFinite(Date.parse(item?.end)),
+      )
+    )
       throw new Error("Primary calendar availability unavailable");
-    const external = data.calendars?.primary?.busy;
-    if (!Array.isArray(external))
-      throw new Error("Invalid availability response");
+    return primary.busy;
+  }
+  async freeBusy() {
+    const now = new Date();
+    const external = await this.availability(
+      now,
+      new Date(now.getTime() + 32 * 86400000),
+    );
+    if (!external) return;
     await mutate(this.uid, async (tx, read, rows) => {
       const [p, sessions, topics] = await Promise.all([
         read("preferences", "default"),

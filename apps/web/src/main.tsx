@@ -27,13 +27,21 @@ import {
   Sun,
 } from "lucide-react";
 import { DateTime } from "luxon";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { createRoot } from "react-dom/client";
 import { defaults } from "../../../packages/shared/src/index.ts";
 import { api, setCsrf, loadTopics } from "./api";
 import { Logo, Materials } from "./components";
 import { date } from "./date";
 import { Reschedule, SettingsForm, TopicEditor } from "./forms";
+
 import "./style.css";
 import type { Review, Topic } from "./types";
 import { Button, Dialog, ErrorContext } from "./ui.tsx";
@@ -50,6 +58,21 @@ const emptyDashboard = {
   calendar: { connected: false } as { connected: boolean; error?: string },
   progress: 0,
 };
+
+const ConnectFlow = lazy(() =>
+  import("./Connect").then(({ ConnectFlow }) => ({ default: ConnectFlow })),
+);
+const ConnectSettings = lazy(() =>
+  import("./Connect").then(({ ConnectSettings }) => ({
+    default: ConnectSettings,
+  })),
+);
+const connectFlow =
+  location.pathname === "/connect/authorize"
+    ? "authorize"
+    : location.pathname === "/connect/confirm"
+      ? "confirm"
+      : null;
 
 function App() {
   const [identity, setIdentity] = useState<User | null>(),
@@ -197,7 +220,7 @@ function App() {
     [archived, sort],
   );
   useEffect(() => {
-    if (!user) return;
+    if (!user || connectFlow) return;
     const controller = new AbortController();
     refresh(controller.signal).catch((e) => {
       if (!controller.signal.aborted) setError(e.message);
@@ -296,6 +319,20 @@ function App() {
       (!tag || t.tags.includes(tag)),
   );
   const tags = [...new Set(topics.flatMap((t) => t.tags))].sort();
+  if (usesFirebase && connectFlow)
+    return (
+      <Suspense fallback={null}>
+        <ConnectFlow
+          mode={connectFlow}
+          email={user?.email}
+          loading={loading}
+          signingIn={signingIn}
+          error={!!error}
+          onSignIn={signIn}
+          onSignOut={signOut}
+        />
+      </Suspense>
+    );
   if (loading)
     return (
       <div className="center-screen">
@@ -602,6 +639,11 @@ function App() {
                     )}
                   </div>
                 </div>
+                {usesFirebase && (
+                  <Suspense fallback={null}>
+                    <ConnectSettings key={user.id} />
+                  </Suspense>
+                )}
                 <div className="settings-card">
                   <h2>Account</h2>
                   <p>
