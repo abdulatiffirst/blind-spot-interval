@@ -10,6 +10,7 @@ import {
   all,
   fail,
   type RecordData,
+  type MutationGuard,
 } from "./store.ts";
 import {
   defaults,
@@ -82,6 +83,7 @@ export function queue(
     retryAt: Date.now(),
     createdAt: Date.now(),
   });
+  return id;
 }
 function busy(sessions: RecordData[], except?: string): Busy[] {
   return sessions
@@ -122,15 +124,29 @@ export function placement(
     adjustment_reason: choice.reason,
   };
 }
+const pendingQuery = (ref: FirebaseFirestore.CollectionReference) =>
+  ref.where("status", "==", "pending").limit(1001);
+function boundedPending(sessions: RecordData[]) {
+  if (sessions.length > 1000)
+    fail(409, "This schedule exceeds the Connect preview and mutation limit");
+  return sessions;
+}
+async function pendingSessions(uid: string) {
+  const snapshot = await pendingQuery(collection(uid, "reviewSchedules")).get();
+  return boundedPending(
+    snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id })),
+  );
+}
 async function context(
   read: (name: string, id: string) => Promise<RecordData | null>,
-  rows: (name: string) => Promise<RecordData[]>,
+  rows: (name: string, query?: typeof pendingQuery) => Promise<RecordData[]>,
   topicId?: string,
+  mcp = false,
 ) {
   const [pref, sessions, tags, topic, memory, materials] = await Promise.all([
     read("preferences", "default"),
-    rows("reviewSchedules"),
-    rows("tags"),
+    rows("reviewSchedules", mcp ? pendingQuery : undefined),
+    mcp && topicId ? [] : rows("tags"),
     topicId ? read("topics", topicId) : null,
     topicId ? read("memoryStates", topicId) : null,
     topicId ? read("topicMaterials", topicId) : null,
@@ -138,7 +154,7 @@ async function context(
   if (topicId && !topic) fail(404, "Topic not found");
   return {
     p: { ...defaults, ...pref } as Preferences,
-    sessions,
+    sessions: mcp ? boundedPending(sessions) : sessions,
     tags,
     topic: topic!,
     memory: memory!,
@@ -250,61 +266,79 @@ export async function createTopic(
   raw: unknown,
   key?: string,
   availability?: (manual?: string, duration?: number) => Promise<Busy[]>,
+  guard?: MutationGuard,
 ) {
   const input = topicInput.parse(raw),
     id = key ? digest(`${uid}:${key}`) : randomUUID(),
     scheduleId = randomUUID(),
     now = new Date();
-  if (key && (await get(uid, "topics", id))) return details(uid, id);
+  if (!guard && key && (await get(uid, "topics", id))) return details(uid, id);
   const external = await availability?.(input.scheduledAt, input.duration);
-  await mutate(uid, async (tx, read, rows, root) => {
-    const existing = await read("topics", id);
-    if (existing) return;
-    const c = await context(read, rows);
-    const topic = {
-      id,
-      user_id: uid,
-      title: input.title,
-      initial_knowledge: input.initialKnowledge,
-      importance: input.importance,
-      target_retention: c.p.retention[(input.importance ?? 3) - 1],
-      duration: input.duration,
-      status: "active",
-      tags: normalizeTags(input.tags, c.tags),
-      pendingScheduleId: scheduleId,
-      created_at: now.toISOString(),
-      updated_at: now.toISOString(),
-    };
-    const ideal = coldStart(now, input.initialKnowledge, c.p.timezone);
-    const session = {
-      id: scheduleId,
-      topic_id: id,
-      ideal_due_at: ideal.toISOString(),
-      duration: input.duration,
-      status: "pending",
-      recovery: false,
-      created_at: now.toISOString(),
-      ...placement(topic, ideal, c.p, c.sessions, now, {
-        external,
-        manual: input.scheduledAt ? new Date(input.scheduledAt) : undefined,
-      }),
-    };
-    verifyPreview(input.expectedStart, session.scheduled_at);
-    tx.create(collection(uid, "topics").doc(id), topic);
-    saveContent(tx, uid, id, input, c.tags);
-    tx.create(collection(uid, "memoryStates").doc(id), {
-      topic_id: id,
-      card: null,
-      stability: null,
-      difficulty: null,
-      algorithm_version: algorithmVersion,
-      parameters,
-      review_count: 0,
-      last_review_at: null,
-    });
-    tx.create(collection(uid, "reviewSchedules").doc(scheduleId), session);
-    queue(tx, uid, root.revision + 1);
-  });
+  await mutate(
+    uid,
+    async (tx, read, rows, root) => {
+      const existing = await read("topics", id);
+      if (existing)
+        return {
+          id,
+          title: existing.title,
+          duration: existing.duration,
+          first: null,
+        };
+      const c = await context(read, rows, undefined, !!guard);
+      const topic = {
+        id,
+        user_id: uid,
+        title: input.title,
+        initial_knowledge: input.initialKnowledge,
+        importance: input.importance,
+        target_retention: c.p.retention[(input.importance ?? 3) - 1],
+        duration: input.duration,
+        status: "active",
+        tags: normalizeTags(input.tags, c.tags),
+        pendingScheduleId: scheduleId,
+        created_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      };
+      const ideal = coldStart(now, input.initialKnowledge, c.p.timezone);
+      const session = {
+        id: scheduleId,
+        topic_id: id,
+        ideal_due_at: ideal.toISOString(),
+        duration: input.duration,
+        status: "pending",
+        recovery: false,
+        created_at: now.toISOString(),
+        ...placement(topic, ideal, c.p, c.sessions, now, {
+          external,
+          manual: input.scheduledAt ? new Date(input.scheduledAt) : undefined,
+        }),
+      };
+      verifyPreview(input.expectedStart, session.scheduled_at);
+      tx.create(collection(uid, "topics").doc(id), topic);
+      saveContent(tx, uid, id, input, c.tags);
+      tx.create(collection(uid, "memoryStates").doc(id), {
+        topic_id: id,
+        card: null,
+        stability: null,
+        difficulty: null,
+        algorithm_version: algorithmVersion,
+        parameters,
+        review_count: 0,
+        last_review_at: null,
+      });
+      tx.create(collection(uid, "reviewSchedules").doc(scheduleId), session);
+      const jobId = queue(tx, uid, root.revision + 1);
+      return {
+        id,
+        title: topic.title,
+        duration: topic.duration,
+        first: session,
+        jobId,
+      };
+    },
+    guard,
+  );
   return details(uid, id);
 }
 export async function editTopic(uid: string, id: string, raw: unknown) {
@@ -400,25 +434,152 @@ export async function archive(uid: string, id: string, restore = false) {
   });
   return { ok: true };
 }
-export async function reschedule(uid: string, id: string, at?: Date) {
-  const now = new Date();
-  if (at && (!Number.isFinite(at.getTime()) || at <= now))
+type ManualContext = {
+  topic: RecordData;
+  p: Preferences;
+  sessions: RecordData[];
+};
+function manualChoice(
+  c: ManualContext,
+  session: RecordData,
+  now: Date,
+  at?: Date,
+  external?: Busy[],
+) {
+  return placement(
+    { ...c.topic, duration: session.duration },
+    new Date(session.ideal_due_at),
+    c.p,
+    c.sessions,
+    now,
+    { manual: at, exclude: session.id, recovery: session.recovery, external },
+  );
+}
+function manualWarnings(
+  c: ManualContext,
+  session: RecordData,
+  now: Date,
+  at: Date,
+  external: Busy[],
+) {
+  const internal = manualChoice(c, session, now, at);
+  const hours = manualChoice({ ...c, sessions: [] }, session, now, at);
+  const overlapsCalendar = external.some(
+    (b) =>
+      at.getTime() < Date.parse(b.end) &&
+      at.getTime() + session.duration * 60_000 > Date.parse(b.start),
+  );
+  const local = DateTime.fromJSDate(at, { zone: c.p.timezone }).startOf("day");
+  const ideal = DateTime.fromISO(session.ideal_due_at, {
+    zone: c.p.timezone,
+  }).startOf("day");
+  const outside =
+    local < ideal.minus({ days: session.recovery ? 0 : c.p.daysBefore }) ||
+    local > ideal.plus({ days: c.p.daysAfter });
+  return [
+    ...(internal.adjustment_reason &&
+    internal.adjustment_reason !== hours.adjustment_reason
+      ? [internal.adjustment_reason]
+      : []),
+    ...(hours.adjustment_reason ? [hours.adjustment_reason] : []),
+    ...(overlapsCalendar
+      ? ["Manual time overlaps Google Calendar availability."]
+      : []),
+    ...(outside
+      ? ["Manual time is outside your preferred scheduling window."]
+      : []),
+  ];
+}
+function ensureManualDate(at: Date) {
+  if (!Number.isFinite(at.getTime()) || at <= new Date())
     fail(400, "Choose a future time");
-  await mutate(uid, async (tx, read, rows, root) => {
-    const session =
-      (await read("reviewSchedules", id)) ?? fail(404, "Review not found");
-    if (session.status !== "pending") fail(409, "Review is no longer pending");
-    const c = await context(read, rows, session.topic_id);
-    tx.update(
-      collection(uid, "reviewSchedules").doc(id),
-      placement(c.topic, new Date(session.ideal_due_at), c.p, c.sessions, now, {
-        manual: at,
-        exclude: id,
-        recovery: session.recovery,
-      }),
-    );
-    queue(tx, uid, root.revision + 1);
-  });
+}
+export async function previewManual(
+  uid: string,
+  id: string,
+  at: Date,
+  external: Busy[],
+) {
+  ensureManualDate(at);
+  const session =
+    (await get(uid, "reviewSchedules", id)) ?? fail(404, "Review not found");
+  if (session.status !== "pending") fail(409, "Review is no longer pending");
+  const [t, p, sessions] = await Promise.all([
+    get(uid, "topics", session.topic_id),
+    preferences(uid),
+    pendingSessions(uid),
+  ]);
+  if (!t || t.status !== "active") fail(409, "Topic is archived");
+  return {
+    title: t.title,
+    duration: session.duration,
+    timezone: p.timezone,
+    previous: session.scheduled_at ?? null,
+    warnings: manualWarnings(
+      { topic: t, p, sessions },
+      session,
+      new Date(),
+      at,
+      external,
+    ),
+  };
+}
+export async function reschedule(
+  uid: string,
+  id: string,
+  at?: Date,
+  confirmation?: {
+    guard: MutationGuard;
+    external: Busy[];
+    expected: Awaited<ReturnType<typeof previewManual>>;
+  },
+) {
+  if (at) ensureManualDate(at);
+  const now = new Date();
+  await mutate(
+    uid,
+    async (tx, read, rows, root) => {
+      const session =
+        (await read("reviewSchedules", id)) ?? fail(404, "Review not found");
+      if (session.status !== "pending")
+        fail(409, "Review is no longer pending");
+      const c = await context(read, rows, session.topic_id, !!confirmation);
+      if (confirmation && at) {
+        const { expected, external } = confirmation;
+        const warnings = manualWarnings(c, session, now, at, external);
+        if (
+          c.topic.status !== "active" ||
+          c.topic.title !== expected.title ||
+          c.p.timezone !== expected.timezone ||
+          session.duration !== expected.duration ||
+          (session.scheduled_at ?? null) !== expected.previous ||
+          JSON.stringify(warnings) !== JSON.stringify(expected.warnings)
+        )
+          fail(
+            409,
+            "Scheduling conditions changed. Request a new confirmation.",
+          );
+      }
+      const choice = confirmation
+        ? manualChoice(c, session, now, at, confirmation.external)
+        : placement(
+            c.topic,
+            new Date(session.ideal_due_at),
+            c.p,
+            c.sessions,
+            now,
+            {
+              manual: at,
+              exclude: id,
+              recovery: session.recovery,
+            },
+          );
+      tx.update(collection(uid, "reviewSchedules").doc(id), choice);
+      const jobId = queue(tx, uid, root.revision + 1);
+      return { ...session, ...choice, jobId };
+    },
+    confirmation?.guard,
+  );
   return { ok: true };
 }
 export async function complete(
@@ -426,114 +587,120 @@ export async function complete(
   id: string,
   rating: number,
   correct = false,
+  guard?: MutationGuard,
 ) {
   const nextId = randomUUID(),
     requestTime = new Date();
-  return mutate(uid, async (tx, read, rows, root) => {
-    const [session, existing] = await Promise.all([
-      read("reviewSchedules", id),
-      read("reviewHistory", id),
-    ]);
-    if (!session) fail(404, "Review not found");
-    if (existing && !correct) {
-      const topic = await read("topics", session.topic_id);
-      const next = topic?.pendingScheduleId
-        ? await read("reviewSchedules", topic.pendingScheduleId)
-        : null;
-      return { duplicate: true, review: existing, next };
-    }
-    if (session.status !== "pending" && !correct)
-      fail(409, "Review is no longer pending");
-    const c = await context(read, rows, session.topic_id);
-    if (c.topic.status !== "active") fail(409, "Topic is archived");
-    let previous = c.memory.card,
-      now = requestTime;
-    const pending = c.sessions.find(
-      (s) => s.id === c.topic.pendingScheduleId && s.status === "pending",
-    );
-    if (correct) {
-      if (!existing || c.memory.latestReviewId !== id)
-        fail(409, "Only the latest review can be corrected");
-      if (existing.original_rating === rating && pending)
-        return { duplicate: true, review: existing, next: pending };
-      if (pending?.mode === "manual")
-        fail(
-          409,
-          "Return the next review to automatic scheduling before correcting",
-        );
-      previous = existing.previous_state;
-      now = new Date(existing.completed_at);
-    }
-    const result = await advance(
-      previous,
-      rating,
-      c.p.retention[(c.topic.importance ?? 3) - 1],
-      now,
-      c.p.timezone,
-      session.topic_id,
-    );
-    const next = {
-      id: nextId,
-      topic_id: session.topic_id,
-      ideal_due_at: result.ideal.toISOString(),
-      duration: c.topic.duration,
-      status: "pending",
-      recovery: rating <= 2,
-      created_at: requestTime.toISOString(),
-      ...placement(
-        c.topic,
-        result.ideal,
-        c.p,
-        c.sessions.filter((s) => s.id !== id && s.id !== pending?.id),
-        requestTime,
-        { recovery: rating <= 2 },
-      ),
-    };
-    if (correct) {
-      tx.create(collection(uid, "reviewCorrections").doc(randomUUID()), {
-        review_id: id,
-        old_rating: existing!.original_rating,
-        new_rating: rating,
-        old_state: existing!.new_state,
-        corrected_at: requestTime.toISOString(),
-      });
-      if (pending)
-        tx.update(collection(uid, "reviewSchedules").doc(pending.id), {
-          status: "cancelled",
+  return mutate(
+    uid,
+    async (tx, read, rows, root) => {
+      const [session, existing] = await Promise.all([
+        read("reviewSchedules", id),
+        read("reviewHistory", id),
+      ]);
+      if (!session) fail(404, "Review not found");
+      if (existing && !correct) {
+        const topic = await read("topics", session.topic_id);
+        const next = topic?.pendingScheduleId
+          ? await read("reviewSchedules", topic.pendingScheduleId)
+          : null;
+        return { duplicate: true, review: existing, next };
+      }
+      if (session.status !== "pending" && !correct)
+        fail(409, "Review is no longer pending");
+      const c = await context(read, rows, session.topic_id, !!guard);
+      if (c.topic.status !== "active") fail(409, "Topic is archived");
+      let previous = c.memory.card,
+        now = requestTime;
+      const pending = c.sessions.find(
+        (s) => s.id === c.topic.pendingScheduleId && s.status === "pending",
+      );
+      if (correct) {
+        if (!existing || c.memory.latestReviewId !== id)
+          fail(409, "Only the latest review can be corrected");
+        if (existing.original_rating === rating && pending)
+          return { duplicate: true, review: existing, next: pending };
+        if (pending?.mode === "manual")
+          fail(
+            409,
+            "Return the next review to automatic scheduling before correcting",
+          );
+        previous = existing.previous_state;
+        now = new Date(existing.completed_at);
+      }
+      const result = await advance(
+        previous,
+        rating,
+        c.p.retention[(c.topic.importance ?? 3) - 1],
+        now,
+        c.p.timezone,
+        session.topic_id,
+      );
+      const next = {
+        id: nextId,
+        topic_id: session.topic_id,
+        ideal_due_at: result.ideal.toISOString(),
+        duration: c.topic.duration,
+        status: "pending",
+        recovery: rating <= 2,
+        created_at: requestTime.toISOString(),
+        ...placement(
+          c.topic,
+          result.ideal,
+          c.p,
+          c.sessions.filter((s) => s.id !== id && s.id !== pending?.id),
+          requestTime,
+          { recovery: rating <= 2 },
+        ),
+      };
+      if (correct) {
+        tx.create(collection(uid, "reviewCorrections").doc(randomUUID()), {
+          review_id: id,
+          old_rating: existing!.original_rating,
+          new_rating: rating,
+          old_state: existing!.new_state,
+          corrected_at: requestTime.toISOString(),
         });
-    }
-    tx.set(collection(uid, "reviewHistory").doc(id), {
-      id,
-      topic_id: session.topic_id,
-      schedule_id: id,
-      original_rating: rating,
-      mapped_rating: result.mappedRating,
-      completed_at: now.toISOString(),
-      previous_state: previous,
-      new_state: result.card,
-      fsrs_log: json(result.log),
-      algorithm_version: algorithmVersion,
-      parameters,
-      ...(correct ? { corrected_at: requestTime.toISOString() } : {}),
-    });
-    tx.update(collection(uid, "reviewSchedules").doc(id), {
-      status: "completed",
-    });
-    tx.update(collection(uid, "memoryStates").doc(session.topic_id), {
-      card: result.card,
-      stability: result.card.stability,
-      difficulty: result.card.difficulty,
-      review_count: c.memory.review_count + (correct ? 0 : 1),
-      last_review_at: now.toISOString(),
-      latestReviewId: id,
-    });
-    tx.create(collection(uid, "reviewSchedules").doc(nextId), next);
-    tx.update(collection(uid, "topics").doc(session.topic_id), {
-      pendingScheduleId: nextId,
-    });
-    queue(tx, uid, root.revision + 1);
-    return { duplicate: false, next };
-  });
+        if (pending)
+          tx.update(collection(uid, "reviewSchedules").doc(pending.id), {
+            status: "cancelled",
+          });
+      }
+      const review = {
+        id,
+        topic_id: session.topic_id,
+        schedule_id: id,
+        original_rating: rating,
+        mapped_rating: result.mappedRating,
+        completed_at: now.toISOString(),
+        previous_state: previous,
+        new_state: result.card,
+        fsrs_log: json(result.log),
+        algorithm_version: algorithmVersion,
+        parameters,
+        ...(correct ? { corrected_at: requestTime.toISOString() } : {}),
+      };
+      tx.set(collection(uid, "reviewHistory").doc(id), review);
+      tx.update(collection(uid, "reviewSchedules").doc(id), {
+        status: "completed",
+      });
+      tx.update(collection(uid, "memoryStates").doc(session.topic_id), {
+        card: result.card,
+        stability: result.card.stability,
+        difficulty: result.card.difficulty,
+        review_count: c.memory.review_count + (correct ? 0 : 1),
+        last_review_at: now.toISOString(),
+        latestReviewId: id,
+      });
+      tx.create(collection(uid, "reviewSchedules").doc(nextId), next);
+      tx.update(collection(uid, "topics").doc(session.topic_id), {
+        pendingScheduleId: nextId,
+      });
+      const jobId = queue(tx, uid, root.revision + 1);
+      return { duplicate: false, next, ...(guard ? { review, jobId } : {}) };
+    },
+    guard,
+  );
 }
 export async function savePreferences(uid: string, raw: unknown) {
   const p = preferencesInput.parse(raw);
@@ -601,10 +768,11 @@ export async function preview(
     scheduledAt?: string;
   },
   external: Busy[] = [],
+  pendingOnly = false,
 ) {
   const [p, sessions] = await Promise.all([
     preferences(uid),
-    all(uid, "reviewSchedules"),
+    pendingOnly ? pendingSessions(uid) : all(uid, "reviewSchedules"),
   ]);
   const now = new Date(),
     ideal = coldStart(now, input.knowledge ?? null, p.timezone);

@@ -4,6 +4,7 @@ export default defineConfig({
     include: [
       "tests/i18n.test.ts",
       "tests/memory.test.ts",
+      "tests/connect.test.ts",
       "tests/scheduler*.test.ts",
       "tests/security.test.ts",
       "tests/web-config.test.ts",

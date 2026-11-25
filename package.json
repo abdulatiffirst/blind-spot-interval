@@ -39,7 +39,8 @@
     "firebase:migrate": "tsx scripts/migrate-postgres-to-firestore.ts",
     "test:e2e:firebase": "npm run functions:build && node scripts/emulators.mjs emulators:exec --headless --only auth,firestore,functions \"playwright test --config playwright.firebase.config.ts\"",
     "firebase:worker": "tsx scripts/firebase-worker.ts",
-    "dev:functions": "npm run build:watch -w functions"
+    "dev:functions": "npm run build:watch -w functions",
+    "test:connect": "node scripts/test-connect.mjs"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.5",
