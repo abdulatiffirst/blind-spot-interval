@@ -1,3 +1,4 @@
+import { connectPlatformsForRedirects } from "../../../packages/shared/src/connect-platforms.ts";
 import express from "express";
 import { z } from "zod";
 import {
@@ -589,6 +590,14 @@ export function mountAccount(app: express.Express, enabled: Config | null) {
         enabled: !!enabled,
         resource: enabled?.resource.href ?? null,
         writes: enabled?.writes ?? false,
+        platforms: connectPlatformsForRedirects(
+          enabled
+            ? [
+                ...enabled.redirects,
+                ...enabled.clients.flatMap((client) => client.redirect_uris),
+              ]
+            : [],
+        ),
         applications: await listGrants(res.locals.uid),
       }),
     ),
