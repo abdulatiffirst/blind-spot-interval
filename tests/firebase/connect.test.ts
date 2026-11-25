@@ -66,8 +66,13 @@ const authorize = (
     response: fetch(origin + "/authorize?" + query, { redirect: "manual" }),
   };
 };
-async function consent(scope: string[], user = alice, selected = scope) {
-  const { response, verifier, state } = authorize(scope);
+async function consent(
+  scope: string[],
+  user = alice,
+  selected = scope,
+  client?: { client_id: string; redirect_uri: string },
+) {
+  const { response, verifier, state } = authorize(scope, opaque(), client);
   const auth = await response;
   expect(auth.status, await auth.clone().text()).toBe(302);
   const fragment = new URL(auth.headers.get("location")!).hash.slice(1);
@@ -86,8 +91,26 @@ async function consent(scope: string[], user = alice, selected = scope) {
   );
   return { code: url.searchParams.get("code")!, verifier, url };
 }
-const form = (path: string, data: Record<string, string>) =>
-  fetch(origin + path, { method: "POST", body: new URLSearchParams(data) });
+const form = (
+  path: string,
+  data: Record<string, string>,
+  authorization?: string,
+) =>
+  fetch(origin + path, {
+    method: "POST",
+    body: new URLSearchParams(data),
+    headers: authorization ? { authorization } : undefined,
+  });
+const register = (redirects: string[], method?: string) =>
+  fetch(origin + "/register", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      client_name: "Integration test",
+      redirect_uris: redirects,
+      token_endpoint_auth_method: method,
+    }),
+  });
 const exchange = (
   code: string,
   verifier: string,
@@ -191,7 +214,11 @@ describe.skipIf(process.env.BLIND_SPOT_CONNECT_ENABLED !== "true")(
       expect(server).toMatchObject({
         token_endpoint: origin + "/token",
         code_challenge_methods_supported: ["S256"],
-        token_endpoint_auth_methods_supported: ["none"],
+        token_endpoint_auth_methods_supported: [
+          "none",
+          "client_secret_basic",
+          "client_secret_post",
+        ],
       });
       expect((await mcp(opaque())).status).toBe(401);
       expect(
@@ -209,25 +236,38 @@ describe.skipIf(process.env.BLIND_SPOT_CONNECT_ENABLED !== "true")(
     });
 
     it("limits registrations, validates exact callbacks and binds consent to the initiating browser", async () => {
-      const register = (redirect_uri: string) =>
-        fetch(origin + "/register", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            client_name: "Inspector",
-            redirect_uris: [redirect_uri],
-            token_endpoint_auth_method: "none",
-          }),
-        });
       expect(
-        (await register("https://untrusted.invalid/callback")).status,
+        (await register(["https://untrusted.invalid/callback"], "none")).status,
       ).toBe(400);
-      const registered = await register(redirect);
+      const registered = await register([redirect], "none");
       expect(registered.status, await registered.clone().text()).toBe(201);
-      expect(await registered.json()).toMatchObject({
+      const publicClient = await registered.json();
+      expect(publicClient).toMatchObject({
         client_id: expect.stringMatching(/^dcr_/),
         redirect_uris: [redirect],
       });
+      expect(publicClient).not.toHaveProperty("client_secret");
+      const { code, verifier } = await consent(
+        ["topics:read"],
+        alice,
+        undefined,
+        {
+          client_id: publicClient.client_id,
+          redirect_uri: redirect,
+        },
+      );
+      expect(
+        (
+          await exchange(code, verifier, {
+            client_id: publicClient.client_id,
+            client_secret: "unexpected",
+          })
+        ).status,
+      ).toBe(400);
+      expect(
+        (await exchange(code, verifier, { client_id: publicClient.client_id }))
+          .status,
+      ).toBe(200);
       const wrong = await authorize([], opaque(), {
         redirect_uri: redirect.replace("6274", "6275"),
       }).response;
@@ -266,6 +306,227 @@ describe.skipIf(process.env.BLIND_SPOT_CONNECT_ENABLED !== "true")(
       expect(new URL((await denied.json()).url).searchParams.get("error")).toBe(
         "access_denied",
       );
+    });
+
+    it.each([undefined, "client_secret_post"] as const)(
+      "authenticates confidential clients registered with method %s",
+      async (method) => {
+        const response = await register([redirect], method);
+        expect(response.status, await response.clone().text()).toBe(201);
+        const client = await response.json();
+        expect(client).toMatchObject({
+          token_endpoint_auth_method: method ?? "client_secret_basic",
+          client_secret: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+          client_secret_expires_at: expect.any(Number),
+        });
+        const stored = (
+          await db.collection("mcpClients").doc(client.client_id).get()
+        ).data();
+        expect(stored?.clientSecretHash).toBe(digest(client.client_secret));
+        expect(stored).not.toHaveProperty("client_secret");
+
+        const authHeader = (secret: string) =>
+          "Basic " +
+          Buffer.from(client.client_id + ":" + secret).toString("base64");
+        const authenticated: Record<string, string> =
+          method === "client_secret_post"
+            ? {
+                client_id: client.client_id,
+                client_secret: client.client_secret,
+              }
+            : {};
+        const submit = (path: string, fields: Record<string, string>) =>
+          form(
+            path,
+            { ...fields, ...authenticated },
+            method ? undefined : authHeader(client.client_secret),
+          );
+        const { code, verifier } = await consent(
+          ["topics:read"],
+          alice,
+          undefined,
+          {
+            client_id: client.client_id,
+            redirect_uri: redirect,
+          },
+        );
+        const request = {
+          grant_type: "authorization_code",
+          code,
+          code_verifier: verifier,
+          redirect_uri: redirect,
+        };
+        for (const path of ["/token", "/token/", "/token//"]) {
+          expect(
+            (await form(path, { ...request, client_id: client.client_id })).ok,
+          ).toBe(false);
+        }
+        expect(
+          (await form("/token", request, authHeader("incorrect"))).status,
+        ).toBe(401);
+        expect(
+          (
+            await form("/token", {
+              ...request,
+              client_id: client.client_id,
+              client_secret: "incorrect",
+            })
+          ).status,
+        ).toBe(400);
+        expect(
+          (
+            await form(
+              "/token",
+              { ...request, client_id: client.client_id },
+              authHeader(client.client_secret),
+            )
+          ).status,
+        ).toBe(401);
+        expect(
+          (await submit("/token", { ...request, code_verifier: opaque() }))
+            .status,
+        ).toBe(400);
+        const exchanged = await submit("/token", request);
+        expect(exchanged.status).toBe(200);
+        const tokens = (await exchanged.json()) as Tokens;
+        const refresh = {
+          grant_type: "refresh_token",
+          refresh_token: tokens.refresh_token,
+        };
+        expect(
+          (await form("/token", { ...refresh, client_id: client.client_id }))
+            .status,
+        ).toBe(400);
+        const refreshed = await submit("/token", refresh);
+        expect(refreshed.status).toBe(200);
+        const rotated = (await refreshed.json()) as Tokens;
+        expect(rotated.refresh_token).not.toBe(tokens.refresh_token);
+        expect(
+          (
+            await form("/revoke", {
+              client_id: client.client_id,
+              token: rotated.refresh_token,
+            })
+          ).status,
+        ).toBe(400);
+        expect(
+          (await submit("/revoke", { token: rotated.refresh_token })).status,
+        ).toBe(200);
+        expect((await mcp(rotated.access_token)).status).toBe(401);
+        expect(
+          (
+            await submit("/token", {
+              ...refresh,
+              refresh_token: rotated.refresh_token,
+            })
+          ).status,
+        ).toBe(400);
+      },
+    );
+
+    it("accepts six exact Google callbacks, negotiates 2025-11-25 and tests opt-in persistent linking", async () => {
+      const redirects = ["r", "a"].flatMap((path) =>
+        ["", "-sandbox", "-test"].map(
+          (suffix) =>
+            "https://oauth-redirect" +
+            suffix +
+            ".googleusercontent.com/" +
+            path +
+            "/synthetic-app",
+        ),
+      );
+      const registry = db.doc("mcpConfiguration/gemini");
+      expect((await register(redirects)).status).toBe(400);
+      await registry.set({ redirect_uris: redirects });
+      try {
+        expect(
+          (await register([...redirects.slice(0, 5), redirects[5] + "-wrong"]))
+            .status,
+        ).toBe(400);
+        expect((await register(redirects, "private_key_jwt")).status).toBe(400);
+        const response = await register(redirects, "client_secret_post");
+        expect(response.status, await response.clone().text()).toBe(201);
+        const client = await response.json();
+        expect(client.redirect_uris).toEqual(redirects);
+        const { code, verifier } = await consent(scopes, alice, undefined, {
+          client_id: client.client_id,
+          redirect_uri: redirects[0],
+        });
+        const credentials = {
+          client_id: client.client_id,
+          client_secret: client.client_secret,
+        };
+        const exchangeResponse = await exchange(code, verifier, {
+          ...credentials,
+          redirect_uri: redirects[0],
+        });
+        expect(exchangeResponse.status).toBe(200);
+        const tokens = (await exchangeResponse.json()) as Tokens;
+        const refresh = {
+          ...credentials,
+          grant_type: "refresh_token",
+          refresh_token: tokens.refresh_token,
+        };
+        expect(
+          (await form("/token", { ...refresh, client_secret: "incorrect" }))
+            .status,
+        ).toBe(400);
+        const refreshed = await form("/token", refresh);
+        expect(refreshed.status).toBe(200);
+        const linked = (await refreshed.json()) as Tokens;
+        expect(linked.refresh_token).toBe(tokens.refresh_token);
+        expect((await form("/token", refresh)).status).toBe(200);
+
+        const rpc = async (method: string, params: object) => {
+          const result = await mcp(linked.access_token, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              accept: "application/json, text/event-stream",
+              "mcp-protocol-version": "2025-11-25",
+            },
+            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+          });
+          expect(result.status, await result.clone().text()).toBe(200);
+          if (
+            result.headers.get("content-type")?.includes("text/event-stream")
+          ) {
+            const data = (await result.text()).match(/^data: (.+)$/m)?.[1];
+            expect(data).toBeDefined();
+            return JSON.parse(data!).result;
+          }
+          return (await result.json()).result;
+        };
+        expect(
+          await rpc("initialize", {
+            protocolVersion: "2025-11-25",
+            capabilities: {},
+            clientInfo: { name: "synthetic-connected-app", version: "1" },
+          }),
+        ).toMatchObject({ protocolVersion: "2025-11-25" });
+        expect((await rpc("tools/list", {})).tools).toHaveLength(12);
+        expect(
+          await rpc("tools/call", { name: "list_topics", arguments: {} }),
+        ).toMatchObject({
+          structuredContent: { items: expect.any(Array) },
+        });
+
+        await registry.update({ redirect_uris: redirects.slice(1) });
+        expect((await form("/token", refresh)).status).toBe(400);
+        await registry.set({ redirect_uris: redirects });
+        expect(
+          (
+            await form("/revoke", {
+              ...credentials,
+              token: tokens.refresh_token,
+            })
+          ).status,
+        ).toBe(200);
+        expect((await mcp(linked.access_token)).status).toBe(401);
+        expect((await form("/token", refresh)).status).toBe(400);
+      } finally {
+        await registry.delete();
+      }
     });
 
     it("enforces S256, exact token redirects, resource binding, one-use codes, refresh rotation and immediate replay revocation", async () => {

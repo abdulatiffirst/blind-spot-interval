@@ -364,7 +364,7 @@
   "connectClaudeStep2": "Name it Blind Spot and paste the address below. Choose sign-in and automatic registration if your administrator has enabled it, or use an approved public client.",
   "connectClaudeStep3": "Add the connector, choose Connect if prompted, and approve the permissions in Blind Spot.",
   "connectGeminiStep1": "In Gemini on the web, open Settings → Gemini Apps Developer Mode and choose Create new.",
-  "connectGeminiStep2": "Paste the address below. Use dynamic client registration only if your administrator has approved the Gemini callback for this setup.",
+  "connectGeminiStep2": "Choose Dynamic Client Registration and paste the address below. Ask your administrator to approve every Gemini callback shown for this setup.",
   "connectGeminiStep3": "Review the connection notice, choose Connect, then name the app and follow any Blind Spot authorization prompt.",
   "connectOtherStep1": "Find your assistant’s setting for adding a remote integration.",
   "connectOtherStep2": "Enter the address below and use OAuth with the public client or registration method approved by your administrator.",
