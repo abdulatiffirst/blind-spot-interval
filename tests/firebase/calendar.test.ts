@@ -556,13 +556,19 @@ it("hands an in-flight Calendar grant to account deletion without scheduling syn
   const job = deletionRef(member);
   const connection = db.collection("calendarConnections").doc(member);
   const root = db.collection("users").doc(member);
-  const acquired = Promise.withResolvers<void>();
-  const completeExchange = Promise.withResolvers<void>();
+  let markAcquired!: () => void;
+  let releaseExchange!: () => void;
+  const acquired = new Promise<void>((resolve) => {
+    markAcquired = resolve;
+  });
+  const exchangeMayFinish = new Promise<void>((resolve) => {
+    releaseExchange = resolve;
+  });
   await ensureUser(member, {});
   const { state } = await authorize(member);
   const finishCallback = finish("synthetic-code", state, state, async () => {
-    acquired.resolve();
-    await completeExchange.promise;
+    markAcquired();
+    await exchangeMayFinish;
     return Response.json({
       access_token: "access-test-only",
       refresh_token: "late-test-token",
@@ -572,14 +578,14 @@ it("hands an in-flight Calendar grant to account deletion without scheduling syn
   }).catch((error) => error);
   try {
     await Promise.race([
-      acquired.promise,
+      acquired,
       finishCallback.then((error) => {
         throw error;
       }),
     ]);
     await requestDeletion(member, Math.floor(Date.now() / 1000));
     expect((await job.get()).get("nextAttemptAt")).toBeGreaterThan(Date.now());
-    completeExchange.resolve();
+    releaseExchange();
     expect(await finishCallback).toMatchObject({ statusCode: 410 });
     expect((await connection.get()).exists).toBe(false);
     expect((await job.collection("calendarTokens").get()).size).toBe(1);
@@ -594,7 +600,7 @@ it("hands an in-flight Calendar grant to account deletion without scheduling syn
     expect((await job.get()).data()).toEqual({ completed: true });
     expect((await job.collection("calendarTokens").get()).empty).toBe(true);
   } finally {
-    completeExchange.resolve();
+    releaseExchange();
     await finishCallback;
     await Promise.all([
       db.recursiveDelete(job),

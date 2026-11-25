@@ -124,7 +124,7 @@ test("loads the workspace with a Firebase token and restores it on reload", asyn
   const onboarding = page.getByRole("dialog", {
     name: "Find your learning rhythm.",
   });
-  await expect(page.getByRole("navigation")).toBeVisible();
+  await expect(page.locator("aside").getByRole("navigation")).toBeVisible();
   const saved = (await db.doc(`users/${uid}/preferences/default`).get()).data();
   expect(saved?.timezone).toBe(
     await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone),
@@ -156,7 +156,7 @@ test("loads the workspace with a Firebase token and restores it on reload", asyn
   expect((await (await restoredProfile).json()).preferences.onboarded).toBe(
     true,
   );
-  await expect(page.getByRole("navigation")).toBeVisible();
+  await expect(page.locator("aside").getByRole("navigation")).toBeVisible();
   await expect(onboarding).not.toBeVisible();
   expect(meRequests).toHaveLength(2);
 });
@@ -210,9 +210,9 @@ for (const [status, message] of [
     );
     await signIn(page);
     await expect(page.getByRole("alert")).toHaveText(message);
-    await expect(page.getByRole("navigation")).toHaveCount(0);
+    await expect(page.locator("aside").getByRole("navigation")).toHaveCount(0);
     await page.getByRole("button", { name: "Retry loading workspace" }).click();
-    await expect(page.getByRole("navigation")).toBeVisible();
+    await expect(page.locator("aside").getByRole("navigation")).toBeVisible();
   });
 }
 
@@ -339,7 +339,7 @@ test("edit, archive, restore, keyboard dismissal and Firebase sign-out", async (
   await expect(login).toBeVisible();
   await page.reload();
   await expect(login).toBeVisible();
-  await expect(page.getByRole("navigation")).toHaveCount(0);
+  await expect(page.locator("aside").getByRole("navigation")).toHaveCount(0);
   await signIn(page, account);
   await page.getByRole("button", { name: "Topics", exact: true }).click();
   await expect(
@@ -475,7 +475,7 @@ test("Russian account preference, pending archived filter, empty state and cance
   page,
 }) => {
   await signIn(page);
-  await expect(page.getByRole("navigation")).toBeVisible();
+  await expect(page.locator("aside").getByRole("navigation")).toBeVisible();
   const saved = page.waitForResponse(
     (response) =>
       response.url().endsWith("/preferences/language") &&
