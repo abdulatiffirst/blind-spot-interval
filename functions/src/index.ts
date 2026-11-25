@@ -1,3 +1,4 @@
+import { processDeletions } from "./account-deletion.ts";
 import { setGlobalOptions } from "firebase-functions/v2";
 import { onRequest } from "firebase-functions/v2/https";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
@@ -36,4 +37,9 @@ export const reconcileCalendar = onSchedule(
   async () => {
     await reconcile();
   },
+);
+
+export const deleteAccounts = onSchedule(
+  { schedule: "* * * * *", timeoutSeconds: 480, memory: "512MiB", secrets },
+  processDeletions,
 );

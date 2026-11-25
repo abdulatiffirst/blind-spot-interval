@@ -518,3 +518,30 @@ test("Russian account preference, pending archived filter, empty state and cance
   await expect(dialog).toHaveCount(0);
   expect((await db.collection(`users/${uid}/topics`).get()).empty).toBe(true);
 });
+
+test("account settings links to public policies and requires deletion confirmation", async ({
+  page,
+}) => {
+  await signIn(page);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(
+    page.getByRole("link", { name: "Privacy Policy" }),
+  ).toHaveAttribute("href", "/privacy");
+  let deleteRequests = 0;
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/v1/account/delete")
+      deleteRequests++;
+  });
+  await page
+    .getByRole("button", { name: "Delete account", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "Delete account" });
+  await expect(dialog).toContainText("review history");
+  await expect(dialog).toContainText("Calendar events may remain");
+  await expect(
+    dialog.getByRole("button", { name: "Confirm deletion with Google" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  expect(deleteRequests).toBe(0);
+});

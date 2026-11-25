@@ -575,6 +575,27 @@ describe.skipIf(process.env.BLIND_SPOT_CONNECT_ENABLED !== "true")(
         expect(client.getServerVersion()?.name).toBe("blind-spot-connect");
         const { tools } = await client.listTools();
         expect(tools).toHaveLength(12);
+        for (const tool of tools) {
+          const write = [
+            "create_topic",
+            "complete_review",
+            "reschedule_review",
+          ].includes(tool.name);
+          expect(tool.annotations).toMatchObject({
+            readOnlyHint: !write,
+            openWorldHint: false,
+            destructiveHint: ["complete_review", "reschedule_review"].includes(
+              tool.name,
+            ),
+            idempotentHint: true,
+          });
+          expect(tool._meta?.securitySchemes).toMatchObject([
+            {
+              type: "oauth2",
+              scopes: expect.arrayContaining([expect.any(String)]),
+            },
+          ]);
+        }
         expect(
           tools.every(
             (tool) =>

@@ -4,6 +4,7 @@ import {
   connectAuthEmulator,
   GoogleAuthProvider,
   signInWithPopup,
+  reauthenticateWithPopup,
   signOut,
   onAuthStateChanged,
   type Auth,
@@ -108,4 +109,11 @@ export async function login() {
 }
 export async function logout() {
   await signOut(firebaseAuth());
+}
+
+export async function reauthenticateGoogle(user: User) {
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: "select_account" });
+  await reauthenticateWithPopup(user, provider);
+  await user.getIdToken(true);
 }

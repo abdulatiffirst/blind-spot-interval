@@ -92,6 +92,9 @@ test("approves read and write consents and a topic, then revokes the app in Russ
     page.getByRole("heading", { name: "Authorize an AI application" }),
   ).toBeVisible();
   await expect(
+    page.getByRole("link", { name: "Privacy Policy" }),
+  ).toHaveAttribute("href", "/privacy");
+  await expect(
     page.getByRole("checkbox", { name: "Read learning topics and materials" }),
   ).toBeChecked();
   await page.getByRole("button", { name: "Русский" }).click();

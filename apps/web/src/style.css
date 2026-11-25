@@ -2420,3 +2420,35 @@ summary {
     gap: 2px;
   }
 }
+
+.legal-page main {
+  width: min(100%, 46rem);
+  margin-inline: auto;
+  padding-block: clamp(2rem, 7vw, 5rem);
+  overflow-wrap: anywhere;
+}
+.legal-page h1 {
+  font-size: clamp(2rem, 6vw, 3.5rem);
+}
+.legal-page section {
+  margin-top: 1.75rem;
+}
+.legal-page section p {
+  margin-top: 0.45rem;
+  color: var(--muted);
+  line-height: 1.65;
+}
+.legal-page main a,
+.legal-links a {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+.legal-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  font-size: 0.875rem;
+}
+.settings-card .legal-links {
+  margin-top: 1rem;
+}

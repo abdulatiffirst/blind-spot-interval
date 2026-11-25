@@ -14,7 +14,13 @@ import {
 import type { OAuthClientInformationFull } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { z } from "zod";
 import { digest } from "../domain.ts";
-import { auth, db, fail, type RecordData } from "../store.ts";
+import {
+  auth,
+  db,
+  fail,
+  requireActiveAccount,
+  type RecordData,
+} from "../store.ts";
 import { emulator } from "../calendar.ts";
 import { connectPlatformForHost } from "../../../packages/shared/src/connect-platforms.ts";
 
@@ -608,6 +614,7 @@ export async function respondToConsent(
   const ref = transient("consent", id),
     code = secret();
   const result = await db.runTransaction(async (tx) => {
+    await requireActiveAccount(uid, tx);
     const row = consentValid((await tx.get(ref)).data(), browser);
     if (
       new Set(selected).size !== selected.length ||

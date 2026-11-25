@@ -1,0 +1,9 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "blind-spot-connect": {
+      "type": "streamable-http",
+      "url": "https://blind-spot-interval.web.app/api/mcp"
+    }
+  }
+}

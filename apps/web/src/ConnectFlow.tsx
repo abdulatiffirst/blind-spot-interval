@@ -1,3 +1,4 @@
+import { LegalLinks } from "./legal";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -405,6 +406,9 @@ export function ConnectFlow({
           <ArrowLeft size={16} aria-hidden="true" /> {translate("connectOpen")}
         </a>
       </section>
+      <footer>
+        <LegalLinks />
+      </footer>
     </main>
   );
 }

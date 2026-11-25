@@ -58,6 +58,8 @@ import type { Review, Topic } from "./types";
 import { Button, Dialog, ErrorContext } from "./ui.tsx";
 import { TodayView } from "./views/Today";
 
+import { LegalLinks, LegalPage, legalPath } from "./legal";
+import { DeleteAccount } from "./DeleteAccount";
 import { Landing, ratingLabels } from "./views/Landing";
 
 const sectionLabels: Record<string, MessageKey> = {
@@ -170,6 +172,7 @@ function App() {
   const cache = useQueryClient();
   const language = useLanguage();
   const [savingLanguage, setSavingLanguage] = useState(false);
+  const [deletionRequested, setDeletionRequested] = useState(false);
   useEffect(() => {
     document.documentElement.lang = language;
     document.title = translate("pageTitle");
@@ -454,6 +457,7 @@ function App() {
   async function signIn() {
     if (signingIn) return;
     const signal = lifetime.current;
+    setDeletionRequested(false);
     setSigningIn(true);
     setError("");
     try {
@@ -644,7 +648,7 @@ function App() {
         <Skeleton section={section} account />
       </div>
     );
-  if (!user)
+  if (!user || deletionRequested)
     return (
       <Landing
         theme={
@@ -683,6 +687,9 @@ function App() {
         }
         feedback={
           <>
+            {deletionRequested && (
+              <p role="status">{translate("deleteAccountRequested")}</p>
+            )}
             {error && <p role="alert">{systemMessage(error)}</p>}
             {identity && error && (
               <Button
@@ -1004,6 +1011,16 @@ function App() {
                       <Button disabled={busy} onClick={signOut}>
                         {translate("signOut")}
                       </Button>
+                      {usesFirebase && identity && (
+                        <DeleteAccount
+                          user={identity}
+                          onRequested={() => {
+                            setDeletionRequested(true);
+                            signOut();
+                          }}
+                        />
+                      )}
+                      <LegalLinks />
                     </div>
                   </div>
                   {usesFirebase && (
@@ -1341,12 +1358,13 @@ function App() {
   );
 }
 
+const publicPath = legalPath(location.pathname);
 const root = createRoot(document.getElementById("root")!);
 if (import.meta.hot) import.meta.hot.dispose(() => root.unmount());
 root.render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <App />
+      {publicPath ? <LegalPage path={publicPath} /> : <App />}
     </QueryClientProvider>
   </React.StrictMode>,
 );

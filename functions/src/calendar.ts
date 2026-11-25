@@ -2,6 +2,9 @@ import { primaryAvailability } from "../../packages/calendar-scheduler/src/avail
 import { Timestamp } from "firebase-admin/firestore";
 import {
   db,
+  calendarOAuthLock,
+  deletionRef,
+  requireActiveAccount,
   collection,
   get,
   getByIds,
@@ -46,14 +49,14 @@ export async function authorize(uid: string) {
     fail(503, "Calendar encryption key is not configured");
   const state = random(),
     verifier = random();
-  await db
-    .collection("oauthStates")
-    .doc(hash(state))
-    .create({
+  await db.runTransaction(async (tx) => {
+    await requireActiveAccount(uid, tx);
+    tx.create(db.collection("oauthStates").doc(hash(state)), {
       uid,
       verifier,
       expiresAt: Timestamp.fromMillis(Date.now() + 600000),
     });
+  });
   const params = new URLSearchParams({
     client_id: c.client_id,
     redirect_uri: redirectUri(),
@@ -99,61 +102,93 @@ export async function finish(
     const s = await tx.get(ref);
     if (!s.exists || s.data()!.expiresAt.toMillis() < Date.now())
       fail(400, "OAuth state expired or already used");
+    const row = s.data()!;
+    await requireActiveAccount(row.uid, tx);
+    const lock = calendarOAuthLock(row.uid);
+    if ((await tx.get(lock)).get("until") > Date.now())
+      fail(409, "Another Calendar connection is in progress");
+    tx.set(lock, { state: ref.id, until: Date.now() + 120_000 });
     tx.delete(ref);
-    return s.data()!;
+    return row;
   });
-  const tokens = await exchange(
-    {
-      code,
-      grant_type: "authorization_code",
-      redirect_uri: redirectUri(),
-      code_verifier: pending.verifier,
-    },
-    transport,
-  );
-  const refConnection = connections.doc(pending.uid);
-  const old = (await refConnection.get()).data();
-  const refresh =
-    tokens.refresh_token ??
-    (old?.encrypted_tokens
-      ? decrypt(old.encrypted_tokens).refresh_token
-      : undefined);
-  if (
-    !refresh ||
-    !scopes.every((s) => String(tokens.scope).split(" ").includes(s))
-  )
-    fail(
-      400,
-      "Offline Calendar grant is missing. Reconnect with all requested permissions.",
+  const lock = calendarOAuthLock(pending.uid);
+  try {
+    const tokens = await exchange(
+      {
+        code,
+        grant_type: "authorization_code",
+        redirect_uri: redirectUri(),
+        code_verifier: pending.verifier,
+      },
+      transport,
     );
-  await db.runTransaction(async (tx) => {
-    const latest = await tx.get(refConnection);
-    const generation = (latest.get("generation") ?? 0) + 1;
-    const jobId = enqueue(tx, pending.uid, "reconcile", generation);
-    tx.set(refConnection, {
-      ...latest.data(),
-      uid: pending.uid,
-      connected: true,
-      encrypted_tokens: encrypt({
-        ...tokens,
-        refresh_token: refresh,
-        expires_at: Date.now() + tokens.expires_in * 1000,
-      }),
-      scopes: tokens.scope,
-      generation,
-      nextReconcileAt: Date.now() + 300_000,
-      channel_id: null,
-      channel_token: null,
-      channel_expires_at: null,
-      pending_channel_id: null,
-      pending_channel_token: null,
-      reconcileJobId: jobId,
-      inboundJobId: null,
-      outboundJobId: null,
-      error: null,
+    const refConnection = connections.doc(pending.uid);
+    const connected = await db.runTransaction(async (tx) => {
+      const deletion = deletionRef(pending.uid);
+      const [latest, deleting, claim] = await tx.getAll(
+        refConnection,
+        deletion,
+        lock,
+      );
+      if (deleting.exists) {
+        const credential = tokens.refresh_token ?? tokens.access_token;
+        if (
+          credential &&
+          !deleting.get("completed") &&
+          claim.get("state") === ref.id
+        )
+          tx.set(deletion.collection("calendarTokens").doc(ref.id), {
+            encrypted: encrypt({ refresh_token: credential }),
+          });
+        return false;
+      }
+      if (claim.get("state") !== ref.id)
+        fail(409, "Calendar connection expired");
+      const encrypted = latest.get("encrypted_tokens");
+      const refresh =
+        tokens.refresh_token ??
+        (encrypted ? decrypt(encrypted).refresh_token : undefined);
+      if (
+        !refresh ||
+        !scopes.every((s) => String(tokens.scope).split(" ").includes(s))
+      )
+        fail(
+          400,
+          "Offline Calendar grant is missing. Reconnect with all requested permissions.",
+        );
+      const generation = (latest.get("generation") ?? 0) + 1;
+      const jobId = enqueue(tx, pending.uid, "reconcile", generation);
+      tx.set(refConnection, {
+        ...latest.data(),
+        uid: pending.uid,
+        connected: true,
+        encrypted_tokens: encrypt({
+          ...tokens,
+          refresh_token: refresh,
+          expires_at: Date.now() + tokens.expires_in * 1000,
+        }),
+        scopes: tokens.scope,
+        generation,
+        nextReconcileAt: Date.now() + 300_000,
+        channel_id: null,
+        channel_token: null,
+        channel_expires_at: null,
+        pending_channel_id: null,
+        pending_channel_token: null,
+        reconcileJobId: jobId,
+        inboundJobId: null,
+        outboundJobId: null,
+        error: null,
+      });
+      return true;
     });
-  });
-  return pending.uid as string;
+    if (!connected) fail(410, "Account deletion has been requested");
+    return pending.uid as string;
+  } finally {
+    await db.runTransaction(async (tx) => {
+      if ((await tx.get(lock)).get("state") === ref.id) tx.delete(lock);
+    });
+  }
 }
 function retryAfter(header: string | null) {
   if (!header) return 0;
@@ -855,21 +890,25 @@ export function eventDescription(topic: any, materials: { text: string }[]) {
   return `Study materials:\n${materials.map((m) => "• " + escape(m.text)).join("\n")}\n\nTags: ${(topic.tags ?? []).map(escape).join(", ")}\nImportance: ${topic.importance ?? "Not set"}/5\n\nOpen Blind Spot Interval to review and rate your recall:\n${origin()}/?review=${topic.id}`;
 }
 export async function disconnect(uid: string) {
-  await connections.doc(uid).set(
-    {
-      connected: false,
-      encrypted_tokens: "",
-      channel_token: null,
-      pending_channel_token: null,
-      channel_expires_at: null,
-      generation: Date.now(),
-      reconcileJobId: null,
-      nextReconcileAt: null,
-      inboundJobId: null,
-      outboundJobId: null,
-    },
-    { merge: true },
-  );
+  await db.runTransaction(async (tx) => {
+    await requireActiveAccount(uid, tx);
+    tx.set(
+      connections.doc(uid),
+      {
+        connected: false,
+        encrypted_tokens: "",
+        channel_token: null,
+        pending_channel_token: null,
+        channel_expires_at: null,
+        generation: Date.now(),
+        reconcileJobId: null,
+        nextReconcileAt: null,
+        inboundJobId: null,
+        outboundJobId: null,
+      },
+      { merge: true },
+    );
+  });
   return { ok: true };
 }
 export async function resync(uid: string) {

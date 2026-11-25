@@ -62,3 +62,44 @@ test("switches languages, persists on reload and fits Russian text", async ({
   await page.getByRole("button", { name: "English" }).click();
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
 });
+
+test("public legal pages work directly and persist language and theme", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const nav = page.getByRole("navigation", {
+    name: "Privacy, terms and support",
+  });
+  await nav.getByRole("link", { name: "Privacy Policy" }).click();
+  await expect(page).toHaveURL(/\/privacy$/);
+  await expect(
+    page.getByRole("heading", { name: "Privacy Policy" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Русский" }).click();
+  await page.locator("header .icon-button").click();
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("lang", "ru");
+  await expect(page.locator("html")).toHaveClass("dark");
+  await expect(
+    page.getByRole("heading", { name: "Политика конфиденциальности" }),
+  ).toBeVisible();
+  for (const [path, title] of [
+    ["/terms", "Условия использования"],
+    ["/support", "Центр поддержки"],
+  ]) {
+    await page.goto(path);
+    await expect(page.getByRole("heading", { name: title })).toBeVisible();
+    await expect(page.locator("footer a[aria-current='page']")).toHaveText(
+      title,
+    );
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+  }
+  await page.getByRole("button", { name: "English" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Support Center" }),
+  ).toBeVisible();
+});

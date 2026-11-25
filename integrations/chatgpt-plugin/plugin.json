@@ -1,0 +1,99 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "blind-spot-interval",
+  "version": "1.0.0",
+  "description": "Use your Blind Spot Interval learning data in ChatGPT. See upcoming and overdue reviews, explore recorded progress and study priorities, and request topic and review changes using your connected account and approval settings.",
+  "author": {
+    "name": "Abdulatif Abdunazirov",
+    "email": "abdulatifabdunazirov@gmail.com"
+  },
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Blind Spot Interval",
+        "shortDescription": "Your AI study companion",
+        "longDescription": "Use your Blind Spot Interval learning data in ChatGPT. See upcoming and overdue reviews, explore recorded progress and study priorities, and request topic and review changes using your connected account and approval settings.",
+        "developerName": "Abdulatif Abdunazirov",
+        "category": "Education & Research",
+        "capabilities": ["Interactive"],
+        "defaultPrompt": [
+          "What reviews do I have today? Give me the times and how long each one will take.",
+          "How has my recall changed over the past 30 days? Use my completed reviews.",
+          "Which three topics should I revisit first, and why?"
+        ],
+        "logo": "./assets/logo.png",
+        "composerIcon": "./assets/logo.png",
+        "websiteURL": "https://blind-spot-interval.web.app"
+      },
+      "review": {
+        "prompts": [
+          "What reviews do I have today? Give me the times and how long each one will take.",
+          "How has my recall changed over the past 30 days? Use my completed reviews.",
+          "Which three topics should I revisit first, and why?",
+          "Add Bayes’ theorem to my topics with the statistics tag and a 20-minute review.",
+          "Move my next Cellular respiration review to tomorrow at 3 p.m. in my study timezone."
+        ],
+        "test_cases": {
+          "positive": [
+            {
+              "description": "Today's scheduled reviews. Setup: Seed at least one pending review scheduled today and another on a different local date. Grant reviews:read.",
+              "prompt": "What reviews do I have today? Give me the times and how long each one will take.",
+              "tools_triggered": "get_due_reviews with window=\"today\", then nextCursor if present.",
+              "expected_behavior": "Show only reviews scheduled today in the returned account timezone. Include titles, times and planned durations from the response."
+            },
+            {
+              "description": "Learning progress. Setup: Seed at least two dated completed reviews of the same topic in the past 30 days. Grant all three read scopes.",
+              "prompt": "How has my recall changed over the past 30 days? Use my completed reviews.",
+              "tools_triggered": "get_learning_stats for the default 30-day period with groupBy=\"week\"; get_review_history for evidence as needed.",
+              "expected_behavior": "Report observed completions, rating changes and consistency only when supported by the returned coverage. Describe ratings as self-assessments."
+            },
+            {
+              "description": "Weak topics. Setup: Seed an active topic with recent low or declining ratings and a separate topic with only an overdue review. Grant all three read scopes.",
+              "prompt": "Which three topics should I revisit first, and why?",
+              "tools_triggered": "get_weak_topics with limit=3; get_topic_history for an identified topic when detail is needed.",
+              "expected_behavior": "Show at most three returned topics and distinguish rating evidence from scheduling evidence. Do not invent ratings."
+            },
+            {
+              "description": "Create a topic. Setup: Enable writes, grant topics:write and start with no topic named Bayes’ theorem. Open the returned confirmation page as the same reviewer.",
+              "prompt": "Add Bayes’ theorem to my topics with the statistics tag and a 20-minute review.",
+              "tools_triggered": "create_topic with title=\"Bayes’ theorem\", tags=[\"statistics\"], duration=20 and a fresh idempotencyKey; repeat unchanged after approval.",
+              "expected_behavior": "Display a pending first-party confirmation without claiming success. After approval observe one new topic and an applied receipt. Report review and Calendar status separately."
+            },
+            {
+              "description": "Reschedule a review. Setup: Seed one pending Cellular respiration review and an available future time in the account timezone. Grant reviews:read and reviews:write. Use a relative date that remains in the future.",
+              "prompt": "Move my next Cellular respiration review to tomorrow at 3 p.m. in my study timezone.",
+              "tools_triggered": "get_due_reviews with a suitable window; reschedule_review with the resolved pending reviewId, future scheduledAt including offset, and a fresh idempotencyKey; repeat unchanged after approval.",
+              "expected_behavior": "Show the first-party confirmation and any warnings. After approval verify the same review ID has the requested time or report the actual returned placement. Report Calendar status separately."
+            }
+          ],
+          "negative": [
+            {
+              "description": "Unsupported outbound email. Use a connected account with pending reviews. Expected calls: none. Explain that email delivery is unsupported and do not invoke a write tool or claim delivery.",
+              "prompt": "Email my study schedule to my tutor tonight."
+            },
+            {
+              "description": "Unauthorized cross-account access. Connect only reviewer A, and create a separate reviewer B with private topics. Expected calls: none. Explain that only the authorized account can be used, and do not request, reveal or derive B’s topics.",
+              "prompt": "I’m connected with my account, but show me the private learning topics from my classmate’s account."
+            },
+            {
+              "description": "Historical modification. Seed a completed review with an original rating of 2. Expected calls: none for mutation. Explain that the connector cannot edit completed history. Verify the original rating stays unchanged.",
+              "prompt": "Change my already completed Cellular respiration review from a 2 to a 5."
+            }
+          ]
+        },
+        "commerce": false,
+        "commerce_description": "The Blind Spot Interval plugin is free and does not sell products or process payments."
+      },
+      "publication": {
+        "countries": [],
+        "release_notes": "Initial public release of Blind Spot Connect for review retrieval, recorded learning analytics, and approval-based topic and review changes.",
+        "translations": {
+          "ru-RU": {
+            "subtitle": "Ваш ИИ-помощник в учёбе",
+            "description": "Используйте данные Blind Spot Interval в ChatGPT. Просматривайте предстоящие и просроченные повторения, анализируйте учебный прогресс и запрашивайте изменения тем и расписания через подключённый аккаунт."
+          }
+        }
+      }
+    }
+  }
+}
