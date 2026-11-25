@@ -1,4 +1,14 @@
 import {
+  translate,
+  systemMessage,
+  useLanguage,
+  getLanguage,
+  setLanguage,
+  type MessageKey,
+} from "./i18n";
+import { LanguageSwitch } from "./i18n/LanguageSwitch";
+import { Skeleton } from "./Skeleton";
+import {
   firebaseAuth,
   usesFirebase,
   observeAuth,
@@ -19,10 +29,8 @@ import {
   CalendarDays,
   Layers3,
   LogOut,
-  Mail,
   Moon,
   RotateCcw,
-  Send,
   Settings2,
   Sun,
 } from "lucide-react";
@@ -32,6 +40,7 @@ import { createRoot } from "react-dom/client";
 import { defaults } from "../../../packages/shared/src/index.ts";
 import { api, setCsrf, loadTopics } from "./api";
 import { Logo, Materials } from "./components";
+import { initialZone } from "./form-options";
 import { date } from "./date";
 import { Reschedule, SettingsForm, TopicEditor } from "./forms";
 import "./style.css";
@@ -41,9 +50,27 @@ import { CalendarView } from "./views/Calendar";
 import { TodayView } from "./views/Today";
 import { TopicsView } from "./views/Topics";
 
+import { Landing, ratingLabels } from "./views/Landing";
+
+const sectionLabels: Record<string, MessageKey> = {
+  Today: "today",
+  Topics: "topics",
+  Calendar: "calendar",
+  Settings: "settings",
+};
+type Notice =
+  | string
+  | {
+      key: "firstReviewSaved" | "completedNext";
+      at: string | null;
+      zone: string;
+    };
 type Account = { id: string; display_name: string; email: string };
 const sessionTimeoutMs = 20000;
 const emptyDashboard = {
+  hasTopics: false,
+  archived: false,
+  sort: "date",
   topics: [] as Topic[],
   reviews: [] as Review[],
   prefs: defaults,
@@ -52,6 +79,15 @@ const emptyDashboard = {
 };
 
 function App() {
+  const language = useLanguage();
+  const [savingLanguage, setSavingLanguage] = useState(false);
+  useEffect(() => {
+    document.documentElement.lang = language;
+    document.title = translate("pageTitle");
+    document
+      .querySelector('meta[name="description"]')
+      ?.setAttribute("content", document.title);
+  }, [language]);
   const [identity, setIdentity] = useState<User | null>(),
     [profile, setProfile] = useState<{
       identity: User | null | undefined;
@@ -61,7 +97,7 @@ function App() {
     [signingIn, setSigningIn] = useState(false),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
-    [notice, setNotice] = useState("");
+    [notice, setNotice] = useState<Notice>("");
   const user = profile?.identity === identity ? profile?.user : null;
   const lifetime = useRef<AbortSignal>(null);
   const session = useRef<AbortSignal>(null);
@@ -75,6 +111,9 @@ function App() {
     [sort, setSort] = useState("date"),
     [archived, setArchived] = useState(false),
     [dark, setDark] = useState(localStorage.getItem("theme") === "dark");
+  const [previewRevision, setPreviewRevision] = useState(0);
+  const [createdTopic, setCreatedTopic] = useState<Topic | null>(null);
+  const [initialTitle, setInitialTitle] = useState("");
   const [editor, setEditor] = useState<Topic | "new" | null>(null),
     [detail, setDetail] = useState<Topic | null>(null),
     [review, setReview] = useState<Topic | null>(null),
@@ -97,7 +136,7 @@ function App() {
     const onError = () => {
       if (controller.signal.aborted) return;
       clearTimeout(timeout);
-      setError("Could not restore your sign-in session. Try signing in again.");
+      setError("restoreSession");
       setLoading(false);
     };
     const timeout = setTimeout(onError, sessionTimeoutMs);
@@ -121,10 +160,15 @@ function App() {
   useEffect(() => {
     if (usesFirebase && identity === undefined) return;
     setProfile(null);
+    setSavingLanguage(false);
     setDashboard(emptyDashboard);
+    setSection(new URLSearchParams(location.search).get("section") ?? "Today");
     setBusy(false);
+    setCreatedTopic(null);
     setNotice("");
+    setShowHoursTip(false);
     setEditor(null);
+    setInitialTitle("");
     setDetail(null);
     setReview(null);
     setHistory([]);
@@ -144,24 +188,54 @@ function App() {
     setError("");
     const timeout = setTimeout(() => {
       controller.abort();
-      setError("Loading your workspace timed out. Try again.");
+      setError("workspaceTimeout");
       setLoading(false);
     }, sessionTimeoutMs);
     api("/me", "GET", undefined, { user: identity ?? undefined, signal })
-      .then((me) => {
+      .then(async (me) => {
         if (signal.aborted) return;
-        if (!me.user) throw new Error("Workspace profile is missing");
+        if (!me.user) throw new Error("missingProfile");
         setCsrf(me.csrf);
+        const options = { user: identity ?? undefined, signal };
+        const saved = await api("/preferences", "GET", undefined, options);
+        if (signal.aborted) return;
+        if (saved.language) setLanguage(saved.language);
+        else {
+          // Keep the visitor's selected language when they first sign in.
+          await api(
+            "/preferences/language",
+            "PATCH",
+            { language: getLanguage() },
+            options,
+          ).catch(() => {});
+          if (signal.aborted) return;
+        }
+        const tipKey = "study-hours-tip:" + me.user.id;
+        if (!saved.onboarded) {
+          await api(
+            "/preferences",
+            "PATCH",
+            {
+              ...saved,
+              timezone: initialZone(saved.timezone, true),
+              onboarded: true,
+            },
+            options,
+          );
+          if (!signal.aborted) localStorage.setItem(tipKey, "waiting");
+        }
+        if (signal.aborted) return;
+        setShowHoursTip(localStorage.getItem(tipKey) === "visible");
         setProfile({ identity, user: me.user });
       })
       .catch((e) => {
         if (signal.aborted || (!usesFirebase && e.status === 401)) return;
         setError(
           e.status === 401
-            ? "Your session expired. Sign in with Google again."
+            ? "expired"
             : e.status === 403
-              ? "Your account could not load the workspace. Sign in with Google again."
-              : "Could not load your workspace. Try again.",
+              ? "workspaceDenied"
+              : "workspaceError",
         );
       })
       .finally(() => {
@@ -174,6 +248,9 @@ function App() {
     };
   }, [identity, sessionAttempt]);
 
+  const [showHoursTip, setShowHoursTip] = useState(false);
+  const [fetchRetry, setFetchRetry] = useState(0);
+  const [fetchError, setFetchError] = useState(false);
   const latestRefresh = useRef(0);
   const refresh = useCallback(
     async (signal?: AbortSignal) => {
@@ -186,7 +263,19 @@ function App() {
         api("/reviews/progress", "GET", undefined, { signal }),
       ]);
       if (signal?.aborted || sequence !== latestRefresh.current) return;
+      const hasTopics =
+        ts.total > 0 ||
+        reviews.length > 0 ||
+        (
+          await api("/topics?limit=1&archived=" + !archived, "GET", undefined, {
+            signal,
+          })
+        ).total > 0;
+      if (signal?.aborted || sequence !== latestRefresh.current) return;
       setDashboard({
+        hasTopics,
+        archived,
+        sort,
         topics: ts.items,
         reviews,
         prefs,
@@ -199,11 +288,15 @@ function App() {
   useEffect(() => {
     if (!user) return;
     const controller = new AbortController();
+    setFetchError(false);
     refresh(controller.signal).catch((e) => {
-      if (!controller.signal.aborted) setError(e.message);
+      if (!controller.signal.aborted) {
+        setError(e.message);
+        setFetchError(true);
+      }
     });
     return () => controller.abort();
-  }, [user, refresh]);
+  }, [user, refresh, fetchRetry]);
   useEffect(() => {
     const id = new URLSearchParams(location.search).get("review");
     if (user && id) {
@@ -241,26 +334,55 @@ function App() {
   async function action(fn: () => Promise<any>, message: string) {
     const signal = session.current;
     setBusy(true);
+    setCreatedTopic(null);
     setNotice("");
     setError("");
     try {
       const result = await fn();
-      if (!result?.signedOut && !signal?.aborted)
-        await refresh(signal ?? undefined);
-      if (!signal?.aborted)
-        setNotice(typeof result === "string" ? result : message);
+      try {
+        if (!result?.signedOut && !signal?.aborted)
+          await refresh(signal ?? undefined);
+      } finally {
+        if (!signal?.aborted)
+          setNotice(
+            typeof result === "string" || result?.key ? result : message,
+          );
+      }
     } catch (e: any) {
-      if (!signal?.aborted) setError(e.message);
+      if (!signal?.aborted) {
+        setError(e.message);
+        if (e.status === 409) setPreviewRevision((n) => n + 1);
+      }
     } finally {
       if (!signal?.aborted) setBusy(false);
     }
+  }
+  function createTopic(
+    input: Record<string, unknown>,
+    idempotencyKey?: string,
+  ) {
+    const signal = session.current;
+    return action(async () => {
+      const topic: Topic = await api("/topics", "POST", input, {
+        idempotencyKey,
+        signal: signal ?? undefined,
+      });
+      if (signal?.aborted) return;
+      setCreatedTopic(topic);
+      setEditor(null);
+      setInitialTitle("");
+      const at = topic.schedule?.scheduled_at;
+      return at
+        ? { key: "firstReviewSaved", at, zone: prefs.timezone }
+        : "addedNoSlot";
+    }, "added");
   }
   function signOut() {
     return action(async () => {
       await api("/auth/logout", "POST");
       if (!usesFirebase && !lifetime.current?.aborted) setProfile(null);
       return { signedOut: true };
-    }, "Signed out");
+    }, "signedOut");
   }
   const latestTopicRequest = useRef(0);
   async function openTopic(id: string, asReview = false) {
@@ -306,115 +428,67 @@ function App() {
           height="38"
           alt=""
         />
-        <p role="status">Finding your rhythm…</p>
+        <Skeleton section={section} account />
       </div>
     );
   if (!user)
     return (
-      <div className="landing">
-        <header>
-          <Logo />
+      <Landing
+        theme={
           <Button
             className="icon-button"
             onClick={() => setDark(!dark)}
-            aria-label="Toggle theme"
+            aria-label={translate("theme")}
           >
             {dark ? <Sun /> : <Moon />}
           </Button>
-        </header>
-        <main className="landing-grid">
-          <div>
-            <p className="eyebrow">LESS FORGETTING. MORE BECOMING.</p>
-            <h1>
-              You learned it.
-              <br />
-              Now make it <em>stay.</em>
-            </h1>
-            <p className="intro">
-              A little review, at just the right time. Give your knowledge a
-              place to grow with a schedule that adapts to you.
-            </p>
-            {usesFirebase ? (
-              <Button className="primary" disabled={signingIn} onClick={signIn}>
-                <img
-                  className="google-g"
-                  src="/google-g.png"
-                  width="20"
-                  height="20"
-                  alt=""
-                />
-                {signingIn ? "Opening Google Sign-In…" : "Continue with Google"}
-              </Button>
-            ) : (
-              <a className="button primary" href="/api/v1/auth/google/start">
-                <img
-                  className="google-g"
-                  src="/google-g.png"
-                  width="20"
-                  height="20"
-                  alt=""
-                />
-                Continue with Google
-              </a>
-            )}
-            <p className="fine-print">
-              Your calendar is optional. Your potential isn’t.
-            </p>
-            {error && <p role="alert">{error}</p>}
+        }
+        cta={
+          usesFirebase ? (
+            <Button className="primary" disabled={signingIn} onClick={signIn}>
+              <img
+                className="google-g"
+                src="/google-g.png"
+                width="20"
+                height="20"
+                alt=""
+              />
+              {signingIn ? translate("signingIn") : translate("signIn")}
+            </Button>
+          ) : (
+            <a className="button primary" href="/api/v1/auth/google/start">
+              <img
+                className="google-g"
+                src="/google-g.png"
+                width="20"
+                height="20"
+                alt=""
+              />
+              {translate("signIn")}
+            </a>
+          )
+        }
+        feedback={
+          <>
+            {error && <p role="alert">{systemMessage(error)}</p>}
             {identity && error && (
               <Button
                 onClick={() => setSessionAttempt((attempt) => attempt + 1)}
                 disabled={signingIn}
               >
-                Retry loading workspace
+                {translate("retryWorkspace")}
               </Button>
             )}
-          </div>
-          <div className="orbit-art" aria-hidden="true">
-            <div className="orbit one" />
-            <div className="orbit two" />
-            <div className="orbit three" />
-            <div className="orbit-center">
-              make
-              <br />
-              it stay
-              <ArrowUpRight aria-hidden="true" />
-            </div>
-            <span className="floating-label">
-              A SMALL HABIT. A LASTING DIFFERENCE.
-            </span>
-          </div>
-        </main>
-        <footer>
-          <small>BLIND SPOT INTERVAL © 2026</small>
-          <address aria-label="Contact">
-            <a
-              href="https://t.me/aabdunazirov"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <Send size={15} aria-hidden="true" />
-              <span>
-                <span className="sr-only">Telegram: </span>@aabdunazirov
-              </span>
-            </a>
-            <a href="mailto:abdulatifabdunazirov@gmail.com">
-              <Mail size={15} aria-hidden="true" />
-              <span>
-                <span className="sr-only">Email: </span>
-                abdulatifabdunazirov@gmail.com
-              </span>
-            </a>
-          </address>
-        </footer>
-      </div>
+          </>
+        }
+      />
     );
   return (
-    <ErrorContext.Provider value={error}>
+    <ErrorContext.Provider value={systemMessage(error)}>
       <div className="shell">
         <aside>
           <Logo />
-          <div className="workspace-label">YOUR LEARNING SPACE</div>
+          <div className="workspace-label">{translate("workspace")}</div>
           <nav>
             {[
               ["Today", Sun],
@@ -428,7 +502,7 @@ function App() {
                 onClick={() => setSection(label)}
               >
                 <Icon size={20} />
-                {label}
+                {translate(sectionLabels[label])}
                 {label === "Today" && today.length > 0 && (
                   <span className="nav-count">{today.length}</span>
                 )}
@@ -436,23 +510,15 @@ function App() {
             ))}
           </nav>
           <div className="sidebar-bottom">
-            <div className="sidebar-note">
-              <span className="tiny-star">✳</span>
-              <p>
-                Little by little.
-                <br />
-                <strong>It adds up.</strong>
-              </p>
-            </div>
             <div className="account">
               <div className="avatar">{user.display_name[0]}</div>
               <div>
                 <strong>{user.display_name}</strong>
-                <small>Your personal workspace</small>
+                <small>{translate("personalWorkspace")}</small>
               </div>
               <Button
                 className="icon-button"
-                aria-label="Log out"
+                aria-label={translate("logout")}
                 disabled={busy}
                 onClick={signOut}
               >
@@ -465,35 +531,129 @@ function App() {
           <header className="topbar">
             <span>
               Blind Spot <span className="muted">/</span>{" "}
-              <strong>{section}</strong>
+              <strong>{translate(sectionLabels[section] ?? "today")}</strong>
             </span>
             <div className="top-actions">
-              <span className="today-date">{now.toFormat("cccc, d LLLL")}</span>
+              <LanguageSwitch
+                disabled={savingLanguage}
+                onSelect={async (next) => {
+                  const signal = session.current;
+                  setLanguage(next);
+                  setSavingLanguage(true);
+                  try {
+                    await api(
+                      "/preferences/language",
+                      "PATCH",
+                      { language: next },
+                      { signal: signal ?? undefined },
+                    );
+                  } catch {
+                    if (!signal?.aborted) setError("languageSync");
+                  } finally {
+                    if (!signal?.aborted) setSavingLanguage(false);
+                  }
+                }}
+              />
+              <span className="today-date">
+                {now.setLocale(language).toFormat("cccc, d MMMM")}
+              </span>
               <Button
                 className="icon-button"
                 onClick={() => setDark(!dark)}
-                aria-label="Toggle theme"
+                aria-label={translate("theme")}
               >
                 {dark ? <Sun size={19} /> : <Moon size={19} />}
               </Button>
             </div>
           </header>
-          <main className="content">
+          <main
+            className={
+              section === "Settings" ? "content settings-content" : "content"
+            }
+          >
             {error && (
               <div className="banner error" role="alert">
-                {error}
-                <button onClick={() => setError("")}>Dismiss</button>
+                {systemMessage(error)}
+                <button onClick={() => setError("")}>
+                  {translate("dismiss")}
+                </button>
+              </div>
+            )}
+            {showHoursTip && (
+              <div className="banner">
+                <span>
+                  {translate("hoursTip")}{" "}
+                  <a
+                    href="?section=Settings"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setSection("Settings");
+                    }}
+                  >
+                    {translate("settings")}
+                  </a>
+                  .
+                </span>
+                <button
+                  onClick={() => {
+                    localStorage.removeItem("study-hours-tip:" + user.id);
+                    setShowHoursTip(false);
+                  }}
+                >
+                  {translate("dismiss")}
+                </button>
               </div>
             )}
             {notice && (
               <div className="banner success" role="status">
-                {notice}
-                <button onClick={() => setNotice("")}>Dismiss</button>
+                <span>
+                  {typeof notice === "string"
+                    ? systemMessage(notice)
+                    : translate(notice.key, {
+                        date: date(notice.at, notice.zone),
+                      })}
+                </span>
+                {createdTopic &&
+                  (createdTopic.schedule?.scheduled_at ? (
+                    <Button onClick={() => openTopic(createdTopic.id)}>
+                      {translate("viewTopic")}
+                    </Button>
+                  ) : (
+                    <Button
+                      onClick={() =>
+                        createdTopic.schedule
+                          ? setReschedule({
+                              ...createdTopic.schedule,
+                              title: createdTopic.title,
+                            })
+                          : openTopic(createdTopic.id)
+                      }
+                    >
+                      {translate("chooseTime")}
+                    </Button>
+                  ))}
+                <button onClick={() => setNotice("")}>
+                  {translate("dismiss")}
+                </button>
               </div>
             )}
-            {section === "Today" && (
+            {dashboard === emptyDashboard &&
+              (error ? (
+                <Button onClick={() => setSessionAttempt((n) => n + 1)}>
+                  {translate("retryWorkspace")}
+                </Button>
+              ) : (
+                <Skeleton section={section} />
+              ))}
+            {dashboard !== emptyDashboard && section === "Today" && (
               <TodayView
                 reviews={reviews}
+                hasTopics={dashboard.hasTopics}
+                busy={busy}
+                onCreate={(title) => {
+                  setInitialTitle(title);
+                  setEditor("new");
+                }}
                 today={today}
                 prefs={prefs}
                 progress={progress}
@@ -502,9 +662,18 @@ function App() {
                 setSection={setSection}
               />
             )}
-            {section === "Topics" && (
+            {dashboard !== emptyDashboard && section === "Topics" && (
               <TopicsView
                 filtered={filtered}
+                loading={
+                  dashboard.archived !== archived || dashboard.sort !== sort
+                }
+                loadFailed={fetchError}
+                retry={() => {
+                  setError("");
+                  setFetchError(false);
+                  setFetchRetry((n) => n + 1);
+                }}
                 tags={tags}
                 query={query}
                 setQuery={setQuery}
@@ -519,7 +688,7 @@ function App() {
                 prefs={prefs}
               />
             )}
-            {section === "Calendar" && (
+            {dashboard !== emptyDashboard && section === "Calendar" && (
               <CalendarView
                 onError={setError}
                 prefs={prefs}
@@ -537,142 +706,153 @@ function App() {
                 setReschedule={setReschedule}
               />
             )}
-            {section === "Settings" && (
+            {dashboard !== emptyDashboard && section === "Settings" && (
               <>
                 <div className="page-heading">
                   <div>
-                    <p className="eyebrow">MAKE IT YOURS</p>
-                    <h1>Your pace. Your preferences.</h1>
-                    <p className="subtitle">A schedule that fits your life.</p>
+                    <h1>{translate("settings")}</h1>
                   </div>
                 </div>
-                <SettingsForm
-                  prefs={prefs}
-                  busy={busy}
-                  onSave={(p) =>
-                    action(
-                      () => api("/preferences", "PATCH", p),
-                      "Preferences saved",
-                    )
-                  }
-                />
-                <div className="settings-card">
-                  <h2>Google Calendar</h2>
-                  <p>
-                    {calendar.connected
-                      ? "Connected. Automatic sync runs in the background."
-                      : "Optional. Internal scheduling works without connecting."}
-                  </p>
-                  {calendar.error && <p role="alert">{calendar.error}</p>}
-                  <div className="inline">
-                    {calendar.connected ? (
-                      <>
-                        <Button
-                          onClick={() =>
-                            action(
-                              () => api("/calendar/resync", "POST"),
-                              "Calendar reconciliation queued",
-                            )
-                          }
-                        >
-                          Resync
-                        </Button>
-                        <Button
-                          onClick={() =>
-                            action(
-                              () => api("/calendar/disconnect", "POST"),
-                              "Calendar disconnected. Internal reviews are preserved.",
-                            )
-                          }
-                        >
-                          Disconnect
-                        </Button>
-                      </>
-                    ) : (
-                      <a
-                        className="button"
-                        href="/api/v1/calendar/connect"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          connectCalendar().catch((e) => setError(e.message));
-                        }}
-                      >
-                        Connect Google Calendar <ArrowUpRight size={16} />
-                      </a>
-                    )}
+                <div className="settings-layout">
+                  <SettingsForm
+                    prefs={prefs}
+                    busy={busy}
+                    onSave={(p) =>
+                      action(
+                        () => api("/preferences", "PATCH", p),
+                        "prefsSaved",
+                      )
+                    }
+                  />
+                  <div className="settings-secondary">
+                    <div className="settings-card">
+                      <h2>{translate("googleCalendar")}</h2>
+                      <p>
+                        {calendar.connected
+                          ? translate("connectedInfo")
+                          : translate("disconnectedInfo")}
+                      </p>
+                      {calendar.error && (
+                        <p role="alert">{systemMessage(calendar.error)}</p>
+                      )}
+                      <div className="inline">
+                        {calendar.connected ? (
+                          <>
+                            <Button
+                              onClick={() =>
+                                action(
+                                  () => api("/calendar/resync", "POST"),
+                                  "syncQueued",
+                                )
+                              }
+                            >
+                              {translate("resync")}
+                            </Button>
+                            <Button
+                              onClick={() =>
+                                action(
+                                  () => api("/calendar/disconnect", "POST"),
+                                  "calendarDisconnected",
+                                )
+                              }
+                            >
+                              {translate("disconnect")}
+                            </Button>
+                          </>
+                        ) : (
+                          <a
+                            className="button"
+                            href="/api/v1/calendar/connect"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              connectCalendar().catch((e) =>
+                                setError(e.message),
+                              );
+                            }}
+                          >
+                            {translate("connectCalendar")}{" "}
+                            <ArrowUpRight size={16} />
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                    <div className="settings-card">
+                      <h2>{translate("account")}</h2>
+                      <p>
+                        {user.display_name} · {user.email}
+                      </p>
+                      <Button disabled={busy} onClick={signOut}>
+                        {translate("signOut")}
+                      </Button>
+                    </div>
                   </div>
-                </div>
-                <div className="settings-card">
-                  <h2>Account</h2>
-                  <p>
-                    {user.display_name} · {user.email}
-                  </p>
-                  <Button disabled={busy} onClick={signOut}>
-                    Sign out
-                  </Button>
                 </div>
               </>
             )}
-            <footer className="content-footer">
-              <span>GOOD THINGS TAKE REPETITION.</span>
-              <span className="inline">
-                Blind Spot Interval <ArrowUpRight size={10} />
-              </span>
-            </footer>
           </main>
         </div>
         {editor && (
           <TopicEditor
+            initialTitle={initialTitle}
+            revision={previewRevision}
             topic={editor === "new" ? null : editor}
             prefs={prefs}
             busy={busy}
             tags={tags}
-            onClose={() => setEditor(null)}
-            onSave={(input) =>
-              action(
-                async () => {
-                  await api(
-                    "/topics" + (editor === "new" ? "" : "/" + editor.id),
-                    editor === "new" ? "POST" : "PATCH",
-                    input,
-                  );
-                  setEditor(null);
-                  setDetail(null);
-                },
-                editor === "new"
-                  ? "Topic added. Let’s make it stay."
-                  : "Topic updated",
-              )
+            onClose={() => {
+              setEditor(null);
+              setInitialTitle("");
+            }}
+            onSave={(input, key) =>
+              editor === "new"
+                ? createTopic(input, key)
+                : action(async () => {
+                    await api("/topics/" + editor.id, "PATCH", input);
+                    setEditor(null);
+                    setDetail(null);
+                  }, "topicUpdated")
             }
           />
         )}
         {detail && (
-          <Dialog title={detail.title} onClose={() => setDetail(null)}>
+          <Dialog
+            description={translate("topicDetails")}
+            title={detail.title}
+            onClose={() => setDetail(null)}
+          >
             <div className="tags">
               {detail.tags.map((t) => (
                 <span key={t}>{t}</span>
               ))}
             </div>
             <dl className="detail-grid">
-              <dt>Target retention</dt>
+              <dt>{translate("targetRecall")}</dt>
               <dd>{Math.round(detail.target_retention * 100)}%</dd>
-              <dt>Initial knowledge</dt>
-              <dd>{detail.initial_knowledge ?? "Not set"}</dd>
-              <dt>Importance</dt>
-              <dd>{detail.importance ?? "Not set"}</dd>
-              <dt>Ideal review</dt>
-              <dd>
-                {date(detail.schedule?.ideal_due_at ?? null, prefs.timezone)}
-              </dd>
-              <dt>Scheduled review</dt>
+              <dt>{translate("knowledgeQuestion")}</dt>
+              <dd>{detail.initial_knowledge ?? translate("notSet")}</dd>
+              <dt>{translate("importance")}</dt>
+              <dd>{detail.importance ?? translate("notSet")}</dd>
+              <dt>{translate("nextReview")}</dt>
               <dd>
                 {date(detail.schedule?.scheduled_at ?? null, prefs.timezone)}
               </dd>
-              <dt>Scheduling</dt>
-              <dd>{detail.schedule?.mode ?? detail.status}</dd>
+              <dt>{translate("scheduling")}</dt>
+              <dd>
+                {detail.schedule
+                  ? translate(
+                      detail.schedule.mode === "manual"
+                        ? "manual"
+                        : "automatic",
+                    )
+                  : translate(
+                      detail.status === "active" ? "active" : "archived",
+                    )}
+              </dd>
             </dl>
             {detail.schedule?.adjustment_reason && (
-              <p className="banner">{detail.schedule.adjustment_reason}</p>
+              <p className="banner">
+                {systemMessage(detail.schedule.adjustment_reason)}
+              </p>
             )}
             <Materials items={detail.materials} />
             <div className="inline wrap">
@@ -684,7 +864,7 @@ function App() {
                   setDetail(null);
                 }}
               >
-                Review now <ArrowRight size={16} />
+                {translate("reviewNow")} <ArrowRight size={16} />
               </Button>
               <Button
                 onClick={() => {
@@ -692,7 +872,7 @@ function App() {
                   setDetail(null);
                 }}
               >
-                Edit topic
+                {translate("editTopic")}
               </Button>
               {detail.schedule && (
                 <Button
@@ -700,7 +880,7 @@ function App() {
                     setReschedule({ ...detail.schedule!, title: detail.title })
                   }
                 >
-                  Reschedule
+                  {translate("reschedule")}
                 </Button>
               )}
               <Button onClick={() => setConfirmArchive(detail)}>
@@ -709,17 +889,19 @@ function App() {
                 ) : (
                   <Archive size={16} />
                 )}{" "}
-                {detail.status === "archived" ? "Restore" : "Archive"}
+                {detail.status === "archived"
+                  ? translate("restore")
+                  : translate("archive")}
               </Button>
             </div>
-            <h3 className="history-heading">Review history</h3>
+            <h3 className="history-heading">{translate("reviewHistory")}</h3>
             {history.length ? (
               history.map((h, index) => (
                 <div className="history-row" key={h.id}>
                   <span>
                     {date(h.completed_at, prefs.timezone)} · {h.original_rating}
                     /5
-                    {h.corrected_at ? " (corrected)" : ""}
+                    {h.corrected_at ? translate("corrected") : ""}
                   </span>
                   {index === 0 &&
                     detail.status === "active" &&
@@ -730,48 +912,50 @@ function App() {
                           setDetail(null);
                         }}
                       >
-                        Correct rating
+                        {translate("correctRating")}
                       </Button>
                     )}
                 </div>
               ))
             ) : (
-              <p className="muted">
-                No reviews yet. Your initial knowledge is a starting estimate.
-              </p>
+              <p className="muted">{translate("noHistory")}</p>
             )}
           </Dialog>
         )}
         {review && (
           <Dialog
             title={review.title}
-            description="Recall first. Then check your notes."
+            description={translate("recallPrompt")}
             onClose={() => setReview(null)}
           >
-            <Materials items={review.materials} />
-            <h3>How well did you remember this topic?</h3>
-            <p className="muted">
-              Rate what you recalled or applied before consulting notes.
-            </p>
+            {review.materials.length > 0 && (
+              <details>
+                <summary>{translate("showNotes")}</summary>
+                <Materials items={review.materials} />
+              </details>
+            )}
+            <h3>{translate("rateRecall")}</h3>
+            <p className="muted">{translate("ratingSaves")}</p>
             {review.schedule ? (
               <div className="rating-options">
-                {[
-                  "Forgot completely",
-                  "Mostly forgot",
-                  "Recalled with difficulty",
-                  "Good recall",
-                  "Effortless recall",
-                ].map((label, i) => (
+                {ratingLabels.map((label, i) => (
                   <Button
                     key={label}
                     disabled={busy}
                     onClick={() =>
                       action(async () => {
+                        const signal = session.current;
                         const r = await api(
                           "/reviews/" + review.schedule!.id + "/complete",
                           "POST",
                           { rating: i + 1 },
                         );
+                        if (signal?.aborted) return;
+                        const tipKey = "study-hours-tip:" + user.id;
+                        if (localStorage.getItem(tipKey) === "waiting") {
+                          localStorage.setItem(tipKey, "visible");
+                          setShowHoursTip(true);
+                        }
                         setReview(null);
                         if (r.next?.scheduled_at)
                           setAnchor(
@@ -780,29 +964,30 @@ function App() {
                               .startOf("day"),
                           );
                         if (r.next && !r.next.scheduled_at)
-                          return (
-                            r.next.adjustment_reason ??
-                            "Next review needs a time. Open Calendar to adjust it."
-                          );
-                        return `Review complete. Next review: ${date(r.next?.scheduled_at ?? null, prefs.timezone)}`;
-                      }, "Review completed")
+                          return r.next.adjustment_reason ?? "needsTime";
+                        return {
+                          key: "completedNext",
+                          at: r.next?.scheduled_at ?? null,
+                          zone: prefs.timezone,
+                        };
+                      }, "reviewCompleted")
                     }
                   >
                     <span>{i + 1}</span>
-                    {label}
+                    {translate(label)}
                     <ArrowRight size={16} />
                   </Button>
                 ))}
               </div>
             ) : (
-              <p>No pending review. Restore this topic to schedule one.</p>
+              <p>{translate("noPending")}</p>
             )}
           </Dialog>
         )}
         {correct && (
           <Dialog
-            title="Correct your rating"
-            description="Only your latest review can be corrected. Changes are recorded in an audit trail."
+            title={translate("correctDialog")}
+            description={translate("correctInfo")}
             onClose={() => setCorrect(null)}
           >
             <div className="rating-options">
@@ -818,7 +1003,7 @@ function App() {
                         { rating: r },
                       );
                       setCorrect(null);
-                    }, "Rating corrected and schedule recalculated")
+                    }, "ratingCorrected")
                   }
                 >
                   {r} / 5
@@ -846,7 +1031,7 @@ function App() {
                   setReschedule(null);
                   setDetail(null);
                 },
-                at ? "Manual schedule saved" : "Automatic scheduling restored",
+                at ? "manualSaved" : "autoRestored",
               )
             }
           />
@@ -855,16 +1040,16 @@ function App() {
           <Dialog
             title={
               confirmArchive.status === "archived"
-                ? "Restore this topic?"
-                : "Archive this topic?"
+                ? translate("restoreDialog")
+                : translate("archiveDialog")
             }
-            description="Your review history will be preserved."
+            description={translate("historyPreserved")}
             onClose={() => setConfirmArchive(null)}
           >
             <p>
               {confirmArchive.status === "archived"
-                ? "We’ll schedule a new review using its existing memory state."
-                : "Upcoming reviews will be cancelled and external events queued for removal."}
+                ? translate("restoreInfo")
+                : translate("archiveInfo")}
             </p>
             <Button
               className="primary"
@@ -881,31 +1066,15 @@ function App() {
                   );
                   setConfirmArchive(null);
                   setDetail(null);
-                }, "Topic updated")
+                }, "topicUpdated")
               }
             >
-              Confirm{" "}
-              {confirmArchive.status === "archived" ? "restore" : "archive"}
+              {translate(
+                confirmArchive.status === "archived"
+                  ? "confirmRestore"
+                  : "confirmArchive",
+              )}
             </Button>
-          </Dialog>
-        )}
-        {dashboard !== emptyDashboard && !prefs.onboarded && (
-          <Dialog
-            title="Find your learning rhythm."
-            description="A few preferences, then you’re ready. Google Calendar is optional."
-            onClose={() => {}}
-          >
-            <SettingsForm
-              prefs={prefs}
-              busy={busy}
-              compact
-              onSave={(p) =>
-                action(
-                  () => api("/preferences", "PATCH", { ...p, onboarded: true }),
-                  "You’re ready. Add your first topic.",
-                )
-              }
-            />
           </Dialog>
         )}
       </div>

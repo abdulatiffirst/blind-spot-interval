@@ -1,3 +1,4 @@
+import { primaryAvailability } from "../../packages/calendar-scheduler/src/availability.ts";
 import { Timestamp } from "firebase-admin/firestore";
 import { db, collection, get, all, mutate, fail } from "./store.ts";
 import { queue, digest, placement } from "./domain.ts";
@@ -478,23 +479,14 @@ export class CalendarSync {
         last_sync_at: new Date().toISOString(),
       });
   }
+  async availability(manual?: string, duration?: number) {
+    if (!(await this.connection())) return [];
+    return primaryAvailability(this.request.bind(this), manual, duration);
+  }
   async freeBusy() {
-    const c = await this.connection();
-    if (!c) return;
+    if (!(await this.connection())) return;
     const now = new Date();
-    const data = await this.request("freeBusy", {
-      method: "POST",
-      body: {
-        timeMin: now.toISOString(),
-        timeMax: new Date(Date.now() + 32 * 86400000).toISOString(),
-        items: [{ id: "primary" }],
-      },
-    });
-    if (data.calendars?.primary?.errors?.length)
-      throw new Error("Primary calendar availability unavailable");
-    const external = data.calendars?.primary?.busy;
-    if (!Array.isArray(external))
-      throw new Error("Invalid availability response");
+    const external = await primaryAvailability(this.request.bind(this));
     await mutate(this.uid, async (tx, read, rows) => {
       const [p, sessions, topics] = await Promise.all([
         read("preferences", "default"),

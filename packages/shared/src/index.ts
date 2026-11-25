@@ -8,11 +8,28 @@ export const topicInput = z.object({
   duration: z.number().int().min(5).max(180).default(15),
   tags: z.array(z.string().trim().min(1).max(40)).max(20).default([]),
   materials: z.array(z.string().max(2000)).max(100).default([]),
+  expectedStart: z.iso.datetime({ offset: true }).nullable().optional(),
   scheduledAt: z.iso
     .datetime({ offset: true })
     .refine((v) => Date.parse(v) > Date.now(), "Choose a future time")
     .optional(),
 });
+export const previewInput = z.object({
+  knowledge: z.coerce.number().int().min(1).max(5).optional(),
+  importance: z.coerce.number().int().min(1).max(5).optional(),
+  duration: z.coerce.number().int().min(5).max(180).default(15),
+  scheduledAt: topicInput.shape.scheduledAt,
+});
+export function verifyPreview(
+  expected: string | null | undefined,
+  actual: string | null,
+) {
+  if (expected !== undefined && expected !== actual)
+    throw Object.assign(
+      new Error("Availability changed. Check the updated preview."),
+      { statusCode: 409 },
+    );
+}
 export function applyTopicPatch(current: unknown, patch: unknown) {
   const fields = z.record(z.string(), z.unknown());
   return topicInput.parse({ ...fields.parse(current), ...fields.parse(patch) });

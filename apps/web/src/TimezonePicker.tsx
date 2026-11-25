@@ -1,3 +1,4 @@
+import { translate, getLanguage } from "./i18n";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { zoneOptions, zoneOption } from "./form-options";
 function highlight(text: string, q: string) {
@@ -25,17 +26,18 @@ export function TimezonePicker({
   const id = useId(),
     root = useRef<HTMLDivElement>(null),
     trigger = useRef<HTMLButtonElement>(null);
+  const language = getLanguage();
   const options = useMemo(
-    () => (open ? zoneOptions(value) : []),
-    [open, value],
+    () => (open ? zoneOptions(value, language) : []),
+    [open, value, language],
   );
   const selectedLabel = useMemo(() => {
     try {
-      return zoneOption(value, new Date()).label;
+      return zoneOption(value, new Date(), language).label;
     } catch {
       return value;
     } // Keep older saved values editable if Intl does not recognize them.
-  }, [value]);
+  }, [value, language]);
   const q = query
       .trim()
       .replaceAll("−", "-")
@@ -74,7 +76,7 @@ export function TimezonePicker({
       }}
     >
       <label id={id + "label"} htmlFor={id + "button"}>
-        Timezone
+        {translate("timezone")}
       </label>
       <button
         type="button"
@@ -104,13 +106,13 @@ export function TimezonePicker({
         <div className="option-panel">
           <input
             autoFocus
-            aria-label="Search timezones"
+            aria-label={translate("searchZones")}
             role="combobox"
             aria-controls={id}
             aria-autocomplete="list"
             aria-expanded="true"
             aria-activedescendant={matches[index] ? id + index : undefined}
-            placeholder="Search city, region or UTC offset"
+            placeholder={translate("zonePlaceholder")}
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
@@ -157,7 +159,7 @@ export function TimezonePicker({
             ))}
           </div>
           {!matches.length && (
-            <small role="status">No matching timezones</small>
+            <small role="status">{translate("noZones")}</small>
           )}
         </div>
       )}

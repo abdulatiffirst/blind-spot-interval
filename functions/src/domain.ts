@@ -15,6 +15,7 @@ import {
   defaults,
   preferencesInput,
   topicInput,
+  verifyPreview,
   applyTopicPatch,
   safeUrl,
   type Preferences,
@@ -244,11 +245,18 @@ export async function listTopics(
     total: filtered.length,
   };
 }
-export async function createTopic(uid: string, raw: unknown, key?: string) {
+export async function createTopic(
+  uid: string,
+  raw: unknown,
+  key?: string,
+  availability?: (manual?: string, duration?: number) => Promise<Busy[]>,
+) {
   const input = topicInput.parse(raw),
     id = key ? digest(`${uid}:${key}`) : randomUUID(),
     scheduleId = randomUUID(),
     now = new Date();
+  if (key && (await get(uid, "topics", id))) return details(uid, id);
+  const external = await availability?.(input.scheduledAt, input.duration);
   await mutate(uid, async (tx, read, rows, root) => {
     const existing = await read("topics", id);
     if (existing) return;
@@ -277,9 +285,11 @@ export async function createTopic(uid: string, raw: unknown, key?: string) {
       recovery: false,
       created_at: now.toISOString(),
       ...placement(topic, ideal, c.p, c.sessions, now, {
+        external,
         manual: input.scheduledAt ? new Date(input.scheduledAt) : undefined,
       }),
     };
+    verifyPreview(input.expectedStart, session.scheduled_at);
     tx.create(collection(uid, "topics").doc(id), topic);
     saveContent(tx, uid, id, input, c.tags);
     tx.create(collection(uid, "memoryStates").doc(id), {
@@ -554,7 +564,7 @@ export async function savePreferences(uid: string, raw: unknown) {
         tx.update(collection(uid, "reviewSchedules").doc(session.id), change);
       }
     }
-    tx.set(collection(uid, "preferences").doc("default"), p);
+    tx.set(collection(uid, "preferences").doc("default"), p, { merge: true });
     tx.update(userRef(uid), { timezone: p.timezone });
     queue(tx, uid, root.revision + 1);
   });
@@ -584,7 +594,13 @@ export async function reviews(uid: string, today = false) {
 }
 export async function preview(
   uid: string,
-  input: { knowledge?: number; importance?: number; duration: number },
+  input: {
+    knowledge?: number;
+    importance?: number;
+    duration: number;
+    scheduledAt?: string;
+  },
+  external: Busy[] = [],
 ) {
   const [p, sessions] = await Promise.all([
     preferences(uid),
@@ -598,6 +614,10 @@ export async function preview(
     p,
     sessions,
     now,
+    {
+      external,
+      manual: input.scheduledAt ? new Date(input.scheduledAt) : undefined,
+    },
   );
   return {
     ideal: ideal.toISOString(),

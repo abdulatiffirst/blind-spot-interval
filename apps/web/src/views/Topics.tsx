@@ -1,11 +1,15 @@
+import { translate } from "../i18n";
+import { Skeleton } from "../Skeleton";
 import { ArrowUpRight, Layers3, Plus, Search } from "lucide-react";
 import type { Preferences } from "../../../../packages/shared/src/index";
-import { Empty } from "../components";
 import { date } from "../date";
 import type { Topic } from "../types";
 import { Button } from "../ui";
 export function TopicsView({
   filtered,
+  loading,
+  loadFailed,
+  retry,
   tags,
   query,
   setQuery,
@@ -20,6 +24,9 @@ export function TopicsView({
   prefs,
 }: {
   filtered: Topic[];
+  loading: boolean;
+  loadFailed: boolean;
+  retry: () => void;
   tags: string[];
   query: string;
   setQuery: (s: string) => void;
@@ -37,53 +44,58 @@ export function TopicsView({
     <>
       <div className="page-heading">
         <div>
-          <p className="eyebrow">YOUR GROWING COLLECTION</p>
-          <h1>Small ideas. Lasting knowledge.</h1>
-          <p className="subtitle">Everything you’re learning, in one place.</p>
+          <h1>{translate("topics")}</h1>
         </div>
         <Button className="primary" onClick={() => setEditor("new")}>
-          <Plus size={18} /> Add topic
+          <Plus size={18} /> {translate("addTopic")}
         </Button>
       </div>
       <div className="filters">
         <label className="search">
           <Search size={18} />
           <input
-            aria-label="Search topics"
-            placeholder="Find a topic…"
+            aria-label={translate("searchTopics")}
+            placeholder={translate("findTopic")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
         </label>
         <select
-          aria-label="Filter by tag"
+          aria-label={translate("filterTag")}
           value={tag}
           onChange={(e) => setTag(e.target.value)}
         >
-          <option value="">All tags</option>
+          <option value="">{translate("allTags")}</option>
           {tags.map((t) => (
             <option key={t}>{t}</option>
           ))}
         </select>
         <select
-          aria-label="Sort topics"
+          aria-label={translate("sortTopics")}
           value={sort}
           onChange={(e) => setSort(e.target.value)}
         >
-          <option value="date">Next review</option>
-          <option value="importance">Importance</option>
-          <option value="title">A–Z</option>
+          <option value="date">{translate("nextReview")}</option>
+          <option value="importance">{translate("importance")}</option>
+          <option value="title">{translate("alphabetical")}</option>
         </select>
-        <label className="inline">
+        <label className="archived-pill">
           <input
             type="checkbox"
+            role="switch"
             checked={archived}
             onChange={(e) => setArchived(e.target.checked)}
           />{" "}
-          Archived
+          {translate("archived")}
         </label>
       </div>
-      {filtered.length ? (
+      {loading ? (
+        loadFailed ? (
+          <Button onClick={retry}>{translate("retry")}</Button>
+        ) : (
+          <Skeleton section="Topics" compact />
+        )
+      ) : filtered.length ? (
         <div className="topic-grid">
           {filtered.map((t) => (
             <button
@@ -111,17 +123,35 @@ export function TopicsView({
                     "d LLL · HH:mm",
                   )}
                 </span>
-                <span>{t.duration} min</span>
+                <span>
+                  {t.duration} {translate("min")}
+                </span>
               </div>
             </button>
           ))}
         </div>
       ) : (
-        <Empty
-          title="A place for your next discovery."
-          text="Start with a topic, a skill, or a question you want to remember."
-          onAdd={() => setEditor("new")}
-        />
+        <div className="empty">
+          <h2>
+            {query || tag
+              ? translate("noMatches")
+              : archived
+                ? translate("noArchive")
+                : translate("noTopics")}
+          </h2>
+          {query || tag ? (
+            <Button
+              onClick={() => {
+                setQuery("");
+                setTag("");
+              }}
+            >
+              {translate("clearFilters")}
+            </Button>
+          ) : (
+            !archived && <p>{translate("emptyTopicsCopy")}</p>
+          )}
+        </div>
       )}
     </>
   );

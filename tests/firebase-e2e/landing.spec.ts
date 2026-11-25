@@ -1,44 +1,64 @@
 import { expect, test } from "@playwright/test";
 
-test("public landing page fits the screen and keeps sign-in and contacts reachable", async ({
+test("landing explains the product and fits a phone", async ({
   page,
   isMobile,
 }) => {
-  // Exercise a small phone and a short laptop, where the artwork previously overflowed.
-  const size = isMobile
-    ? { width: 320, height: 568 }
-    : { width: 1280, height: 720 };
-  await page.setViewportSize(size);
+  const width = isMobile ? 390 : 1350;
+  await page.setViewportSize({ width, height: isMobile ? 844 : 720 });
   await page.goto("/");
-  await expect(page).toHaveTitle("Blind Spot Interval");
-  const signIn = page.getByRole("button", { name: "Continue with Google" });
-  await expect(signIn).toBeEnabled();
-  await page.evaluate(() => document.fonts.ready.then(() => true));
-  const footer = page.getByRole("contentinfo");
-  const telegram = footer.getByRole("link", {
-    name: "Telegram: @aabdunazirov",
-  });
-  const email = footer.getByRole("link", {
-    name: "Email: abdulatifabdunazirov@gmail.com",
-  });
-  await expect(telegram).toHaveAttribute("href", "https://t.me/aabdunazirov");
-  await expect(telegram).toHaveAttribute("rel", /noopener/);
-  await expect(telegram).toHaveAttribute("target", "_blank");
-  await expect(email).toHaveAttribute(
-    "href",
-    "mailto:abdulatifabdunazirov@gmail.com",
+  await expect(page).toHaveTitle(
+    "Blind Spot Interval: spaced review reminders for students",
   );
+  const ctas = page.getByRole("button", {
+    name: "Continue with Google and add a topic",
+  });
+  await expect(ctas).toHaveCount(2);
+  await expect(ctas.first()).toBeInViewport({ ratio: 1 });
+  await expect(ctas.first()).toBeEnabled();
   expect(await page.locator("html").evaluate((el) => el.scrollWidth)).toBe(
-    size.width,
+    width,
   );
   if (!isMobile) {
-    expect(await page.locator("html").evaluate((el) => el.scrollHeight)).toBe(
-      size.height,
-    );
-    await expect(signIn).toBeInViewport({ ratio: 1 });
-    await expect(footer).toBeInViewport({ ratio: 1 });
+    const edges = await page.locator(".landing").evaluate((landing) => {
+      const bounds = (selector: string) =>
+        landing.querySelector(selector)!.getBoundingClientRect();
+      return {
+        logo: bounds("header .logo").left,
+        heading: bounds("h1").left,
+        toggle: bounds("header .icon-button").right,
+        demo: bounds(".product-example").right,
+      };
+    });
+    expect(edges.logo).toBe(edges.heading);
+    expect(edges.toggle).toBe(edges.demo);
+    expect(edges.logo).toBe(width - edges.demo);
   }
-  await email.focus();
-  await expect(email).toBeFocused();
-  await expect(email).toBeInViewport();
+  await page.getByText("What is a topic?", { exact: true }).click();
+  await expect(
+    page.getByText("Something you studied", { exact: false }),
+  ).toBeVisible();
+});
+
+test("switches languages, persists on reload and fits Russian text", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Русский" }).click();
+  await expect(page.locator("html")).toHaveAttribute("lang", "ru");
+  await page.getByText("Что такое тема?", { exact: true }).click();
+  await expect(page.getByText(/Это то, что вы изучили/)).toBeVisible();
+  await page.getByRole("button", { name: /Совсем не помню/ }).click();
+  await expect(page.getByRole("status")).toContainText("повторить");
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "Запоминайте то, что изучаете." }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.getByRole("button", { name: "English" }).click();
+  await expect(page.locator("html")).toHaveAttribute("lang", "en");
 });

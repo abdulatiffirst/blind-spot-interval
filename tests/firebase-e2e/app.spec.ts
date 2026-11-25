@@ -10,7 +10,7 @@ let uid: string;
 async function signIn(page: Page, sub = crypto.randomUUID()) {
   await page.goto("/");
   await expect(
-    page.getByRole("button", { name: "Continue with Google" }),
+    page.getByRole("button", { name: "Continue with Google" }).first(),
   ).toBeVisible();
   const token =
     Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString(
@@ -65,7 +65,9 @@ test("reports failed Google popup initialization and allows a retry", async ({
     if (new URL(request.url()).pathname === "/api/v1/me") meRequests++;
   });
   await page.goto("/");
-  const login = page.getByRole("button", { name: "Continue with Google" });
+  const login = page
+    .getByRole("button", { name: "Continue with Google" })
+    .first();
   const error = page.getByRole("alert");
   const logo = login.locator('img[src="/google-g.png"]');
   await expect(logo).toBeVisible();
@@ -93,10 +95,12 @@ test("allows another sign-in attempt if the Google popup never settles", async (
     route.fulfill({ contentType: "text/javascript", body: "" }),
   );
   await page.goto("/");
-  const login = page.getByRole("button", { name: "Continue with Google" });
+  const login = page
+    .getByRole("button", { name: "Continue with Google" })
+    .first();
   await login.click();
   await expect(
-    page.getByRole("button", { name: "Opening Google Sign-In…" }),
+    page.getByRole("button", { name: "Opening Google Sign-In…" }).first(),
   ).toBeDisabled();
   await page.clock.fastForward(120_000);
   await expect(page.getByRole("alert")).toHaveText(
@@ -104,6 +108,8 @@ test("allows another sign-in attempt if the Google popup never settles", async (
   );
   await expect(login).toBeEnabled();
 });
+
+test.use({ timezoneId: "Asia/Tashkent" });
 
 test("loads the workspace with a Firebase token and restores it on reload", async ({
   page,
@@ -118,8 +124,12 @@ test("loads the workspace with a Firebase token and restores it on reload", asyn
   const onboarding = page.getByRole("dialog", {
     name: "Find your learning rhythm.",
   });
-  await expect(onboarding).toBeVisible({ timeout: 40000 });
-  await page.getByRole("button", { name: /Let’s begin/ }).click();
+  await expect(page.getByRole("navigation")).toBeVisible();
+  const saved = (await db.doc(`users/${uid}/preferences/default`).get()).data();
+  expect(saved?.timezone).toBe(
+    await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone),
+  );
+  expect(saved?.onboarded).toBe(true);
   await expect(onboarding).not.toBeVisible();
   await page.getByRole("button", { name: "Topics", exact: true }).click();
   const topicsUpdated = page.waitForResponse((response) => {
@@ -170,7 +180,7 @@ test("cancels a pending profile request when Firebase signs out", async ({
       await logout();
     });
     await expect(
-      page.getByRole("button", { name: "Continue with Google" }),
+      page.getByRole("button", { name: "Continue with Google" }).first(),
     ).toBeVisible();
     await aborted;
     await expect(page.getByRole("alert")).toHaveCount(0);
@@ -199,49 +209,33 @@ for (const [status, message] of [
     await expect(page.getByRole("alert")).toHaveText(message);
     await expect(page.getByRole("navigation")).toHaveCount(0);
     await page.getByRole("button", { name: "Retry loading workspace" }).click();
-    await expect(
-      page.getByRole("dialog", { name: "Find your learning rhythm." }),
-    ).toBeVisible();
+    await expect(page.getByRole("navigation")).toBeVisible();
   });
 }
 
-test("Google credential → onboarding → Logarithms → FSRS review → internal calendar", async ({
+test("Google credential → first topic by name → first review date → review and calendar", async ({
   page,
 }) => {
   await signIn(page);
-  await expect(
-    page.getByRole("dialog", { name: "Find your learning rhythm." }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: /Let’s begin/ }).click();
-  await expect(page.getByRole("dialog")).not.toBeVisible();
-  await page.getByRole("button", { name: "Calendar", exact: true }).click();
-  await page.getByRole("button", { name: "Previous period" }).click();
-  await page.getByRole("button", { name: "Previous period" }).click();
+  await page.getByRole("textbox", { name: "Topic name" }).fill("Logarithms");
+  await page.getByRole("button", { name: "Add topic", exact: true }).click();
   await page
+    .getByRole("dialog")
     .getByRole("button", { name: "Add topic", exact: true })
-    .first()
     .click();
-  const dialog = page.getByRole("dialog");
-  await dialog.getByRole("textbox", { name: /Topic name/ }).fill("Logarithms");
-  await dialog.getByLabel("Initial knowledge").selectOption("3");
-  await dialog.getByLabel("Importance").selectOption("5");
-  await dialog.getByLabel(/Tags/).fill("Mathematics Exam");
-  await dialog
-    .getByLabel("Material 1", { exact: true })
-    .fill("Recall logarithm properties");
-  await dialog.getByLabel("Material 1", { exact: true }).press("Enter");
-  await dialog
-    .getByLabel("Material 2", { exact: true })
-    .fill("https://example.com");
-  await expect(dialog.getByText(/95% target retention/)).toBeVisible();
-  await dialog.getByRole("button", { name: "Add topic", exact: true }).click();
-  await expect(dialog).not.toBeVisible();
-  await page.getByRole("button", { name: "Topics", exact: true }).click();
-  await page.getByRole("button", { name: /Logarithms/ }).click();
-  await expect(page.getByText("95%", { exact: true })).toBeVisible();
+  await expect(page.getByRole("status")).toContainText(
+    /Added\. First review: .+ · \d{2}:\d{2}/,
+  );
+  await page.getByRole("button", { name: "View topic" }).click();
   await page.getByRole("button", { name: /Review now/ }).click();
   await page.getByRole("button", { name: /4 Good recall/ }).click();
   await expect(page.getByRole("status")).toContainText("Next review");
+  const tip = page
+    .locator(".banner")
+    .filter({ hasText: "Want reviews at different times?" });
+  await expect(tip.getByRole("link", { name: "Settings" })).toBeVisible();
+  await tip.getByRole("button", { name: "Dismiss" }).click();
+  await expect(tip).toHaveCount(0);
   await page.getByRole("button", { name: "Calendar", exact: true }).click();
   await expect(page.getByText("Your internal calendar is ready")).toBeVisible();
   const pending = await db
@@ -297,18 +291,15 @@ test("edit, archive, restore, keyboard dismissal and Firebase sign-out", async (
 }) => {
   const account = crypto.randomUUID();
   await signIn(page, account);
-  await page.getByRole("button", { name: /Let’s begin/ }).click();
   await page
-    .getByRole("button", { name: "Add topic", exact: true })
-    .first()
-    .click();
-  await page
-    .getByRole("textbox", { name: /Topic name/ })
+    .getByRole("textbox", { name: "Topic name" })
     .fill("Python functions");
+  await page.getByRole("button", { name: "Add topic", exact: true }).click();
   await page
     .getByRole("dialog")
     .getByRole("button", { name: "Add topic", exact: true })
     .click();
+  await expect(page.getByRole("status")).toContainText("First review:");
   await expect(page.getByRole("dialog")).not.toBeVisible();
   await page.getByRole("button", { name: "Topics", exact: true }).click();
   await page.getByRole("button", { name: /Python functions/ }).click();
@@ -334,12 +325,14 @@ test("edit, archive, restore, keyboard dismissal and Firebase sign-out", async (
   await expect(
     page
       .locator(".stats > div")
-      .filter({ hasText: "ACTIVE TOPICS" })
+      .filter({ hasText: "Active topics" })
       .locator("strong"),
   ).toHaveText("01");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
-  const login = page.getByRole("button", { name: "Continue with Google" });
+  const login = page
+    .getByRole("button", { name: "Continue with Google" })
+    .first();
   await expect(login).toBeVisible();
   await page.reload();
   await expect(login).toBeVisible();
@@ -355,7 +348,6 @@ test("month navigation works from January 1 and failed previews resolve visibly"
   page,
 }) => {
   await signIn(page);
-  await page.getByRole("button", { name: /Let’s begin/ }).click();
   await expect(page.getByRole("dialog")).not.toBeVisible();
   await page.getByRole("button", { name: "Calendar", exact: true }).click();
   await page.clock.setFixedTime(new Date("2027-01-01T12:00:00Z"));
@@ -383,15 +375,14 @@ test("numeric fields support direct editing, validation and fractional retention
   page,
 }) => {
   await signIn(page);
-  const setup = page.getByRole("dialog", {
-    name: "Find your learning rhythm.",
-  });
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const setup = page.locator("form.settings-card");
   const minutes = setup.getByRole("textbox", { name: /Default duration/ });
   await expect(minutes).toBeVisible({ timeout: 40000 });
   await expect(minutes).toHaveAttribute("inputmode", "numeric");
   await minutes.fill("");
   await expect(minutes).toHaveValue("");
-  const submit = setup.getByRole("button", { name: /Let’s begin/ });
+  const submit = setup.getByRole("button", { name: "Save preferences" });
   for (const invalid of ["", "4", "181", "8.5", "abc"]) {
     await minutes.fill(invalid);
     await submit.click();
@@ -408,7 +399,7 @@ test("numeric fields support direct editing, validation and fractional retention
   await expect(minutes).toHaveValue("5");
   await minutes.fill("180");
   await submit.click();
-  await expect(setup).not.toBeVisible();
+  await expect(page.getByRole("status")).toContainText("Preferences saved");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(page.getByLabel(/Default duration/)).toHaveValue("180");
   await page.getByText("Advanced memory preferences", { exact: true }).click();
@@ -424,4 +415,103 @@ test("numeric fields support direct editing, validation and fractional retention
         ).get("retention")[0],
     )
     .toBeCloseTo(0.855, 8);
+});
+
+test("optional topic details and manual date on a short viewport", async ({
+  page,
+}) => {
+  await signIn(page);
+  await page.getByRole("button", { name: "Topics", exact: true }).click();
+  await page.getByRole("button", { name: "Add topic", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  const name = dialog.getByRole("textbox", { name: /Topic name/ });
+  await expect(name).toBeFocused();
+  await name.fill("Chain rule");
+  await page.setViewportSize({ width: 390, height: 390 });
+  const submit = dialog.getByRole("button", { name: "Add topic", exact: true });
+  await expect(submit).toBeInViewport({ ratio: 1 });
+  await dialog
+    .locator(".level-choices")
+    .first()
+    .getByRole("button", { name: "3" })
+    .click();
+  await dialog
+    .locator(".level-choices")
+    .last()
+    .getByRole("button", { name: "5" })
+    .click();
+  await dialog
+    .getByLabel("Material 1", { exact: true })
+    .fill("Differentiate the outer function first.");
+  await dialog.getByRole("button", { name: "Change", exact: true }).click();
+  await dialog.getByRole("button", { name: "Reset", exact: true }).click();
+  await expect(dialog.locator(".schedule-summary")).toContainText("Automatic");
+  await dialog.getByRole("button", { name: "Change", exact: true }).click();
+  await dialog.getByLabel(/Change date/).fill("2031-04-10T18:25");
+  await expect(dialog.locator(".preview strong")).toContainText(
+    /April 10.*18:25/,
+  );
+  await expect(dialog.locator(".schedule-summary")).toContainText(
+    "95% recall goal",
+  );
+  await expect(submit).toBeInViewport({ ratio: 1 });
+  await submit.click();
+  await expect(page.getByRole("status")).toContainText("10 Apr · 18:25");
+  await page.getByRole("button", { name: "View topic" }).click();
+  await page.getByRole("button", { name: "Review now" }).click();
+  await expect(
+    dialog.getByText("Differentiate the outer function first."),
+  ).toBeHidden();
+  await dialog.getByText("Show notes", { exact: true }).click();
+  await expect(
+    dialog.getByText("Differentiate the outer function first."),
+  ).toBeVisible();
+});
+
+test("Russian account preference, pending archived filter, empty state and cancel", async ({
+  page,
+}) => {
+  await signIn(page);
+  await expect(page.getByRole("navigation")).toBeVisible();
+  const saved = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/preferences/language") &&
+      response.request().postDataJSON()?.language === "ru",
+  );
+  await page.getByRole("button", { name: "Русский" }).click();
+  expect((await saved).ok()).toBe(true);
+  await page.evaluate(() => localStorage.removeItem("bsi.language"));
+  await page.reload();
+  await page.getByRole("button", { name: "Темы", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Пока нет тем" }),
+  ).toBeVisible();
+  let release!: () => void;
+  const hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(/topics.*limit=100.*archived=true/, async (route) => {
+    await hold;
+    await route.continue();
+  });
+  await page.getByRole("switch", { name: "Архивные" }).check();
+  try {
+    await expect(page.getByRole("status")).toHaveText("Загружаем темы…");
+  } finally {
+    release();
+  }
+  await expect(
+    page.getByRole("heading", { name: "В архиве пока нет тем" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Добавить тему", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel(/Название темы/).fill("Тест");
+  await expect(dialog.locator(".schedule-summary")).toContainText(
+    "Автоматически",
+  );
+  await dialog.getByRole("button", { name: "Отмена" }).click();
+  await expect(dialog).toHaveCount(0);
+  expect((await db.collection(`users/${uid}/topics`).get()).empty).toBe(true);
 });
