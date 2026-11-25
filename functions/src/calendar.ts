@@ -1,6 +1,22 @@
+import { primaryAvailability } from "../../packages/calendar-scheduler/src/availability.ts";
 import { Timestamp } from "firebase-admin/firestore";
-import { db, collection, get, all, mutate, fail } from "./store.ts";
-import { queue, digest, placement } from "./domain.ts";
+import {
+  db,
+  collection,
+  get,
+  getByIds,
+  records,
+  pendingSchedules,
+  mutate,
+  fail,
+} from "./store.ts";
+import { digest, placement, nextReviewSortKey } from "./domain.ts";
+import {
+  connections,
+  enqueue,
+  jobs,
+  prepareOutbound,
+} from "./calendar-queue.ts";
 import { encrypt, decrypt, random, hash } from "../../apps/api/src/security.ts";
 export const scopes = [
   "https://www.googleapis.com/auth/calendar.app.created",
@@ -95,7 +111,7 @@ export async function finish(
     },
     transport,
   );
-  const refConnection = db.collection("calendarConnections").doc(pending.uid);
+  const refConnection = connections.doc(pending.uid);
   const old = (await refConnection.get()).data();
   const refresh =
     tokens.refresh_token ??
@@ -112,6 +128,8 @@ export async function finish(
     );
   await db.runTransaction(async (tx) => {
     const latest = await tx.get(refConnection);
+    const generation = (latest.get("generation") ?? 0) + 1;
+    const jobId = enqueue(tx, pending.uid, "reconcile", generation);
     tx.set(refConnection, {
       ...latest.data(),
       uid: pending.uid,
@@ -122,23 +140,51 @@ export async function finish(
         expires_at: Date.now() + tokens.expires_in * 1000,
       }),
       scopes: tokens.scope,
-      generation: (latest.data()?.generation ?? 0) + 1,
+      generation,
+      nextReconcileAt: Date.now() + 300_000,
+      channel_id: null,
+      channel_token: null,
+      channel_expires_at: null,
+      pending_channel_id: null,
+      pending_channel_token: null,
+      reconcileJobId: jobId,
+      inboundJobId: null,
+      outboundJobId: null,
       error: null,
     });
-    queue(tx, pending.uid, Date.now(), "reconcile", random());
   });
   return pending.uid as string;
 }
+function retryAfter(header: string | null) {
+  if (!header) return 0;
+  return /^\d+$/.test(header)
+    ? Number(header) * 1000
+    : Date.parse(header) - Date.now() || 0;
+}
+
 export class CalendarSync {
   constructor(
     readonly uid: string,
     readonly transport: typeof fetch = fetch,
+    readonly generation?: number,
   ) {}
   async connection() {
-    const c = (
-      await db.collection("calendarConnections").doc(this.uid).get()
-    ).data();
+    const c = (await connections.doc(this.uid).get()).data();
+    if (
+      this.generation !== undefined &&
+      (!c?.connected || c.generation !== this.generation)
+    )
+      fail(409, "Calendar connection changed");
     return c?.connected ? c : null;
+  }
+  async updateConnection(generation: number, data: Record<string, unknown>) {
+    const ref = connections.doc(this.uid);
+    await db.runTransaction(async (tx) => {
+      const current = await tx.get(ref);
+      if (!current.get("connected") || current.get("generation") !== generation)
+        fail(409, "Calendar connection changed");
+      tx.update(ref, data);
+    });
   }
   async request(
     path: string,
@@ -162,7 +208,7 @@ export class CalendarSync {
         expires_at: Date.now() + refreshed.expires_in * 1000,
       };
       await db.runTransaction(async (tx) => {
-        const ref = db.collection("calendarConnections").doc(this.uid),
+        const ref = connections.doc(this.uid),
           latest = await tx.get(ref);
         if (
           latest.data()?.connected &&
@@ -172,9 +218,6 @@ export class CalendarSync {
         else fail(409, "Calendar connection changed");
       });
     }
-    const latest = await this.connection();
-    if (!latest || latest.generation !== c.generation)
-      fail(409, "Calendar connection changed");
     const r = await this.transport(
       "https://www.googleapis.com/calendar/v3/" + path,
       {
@@ -191,6 +234,10 @@ export class CalendarSync {
     if (!r.ok)
       throw Object.assign(new Error(`Google Calendar returned ${r.status}`), {
         status: r.status,
+        retryAfterMs: Math.min(
+          86_400_000,
+          Math.max(0, retryAfter(r.headers.get("retry-after"))),
+        ),
       });
     return options.method === "DELETE" || r.status === 204
       ? null
@@ -207,61 +254,132 @@ export class CalendarSync {
         description: "Knowledge reviews managed by Blind Spot Interval",
       },
     });
-    await db
-      .collection("calendarConnections")
-      .doc(this.uid)
-      .update({ calendar_id: calendar.id });
+    await this.updateConnection(c.generation, { calendar_id: calendar.id });
     return { ...c, calendar_id: calendar.id };
   }
-  async outbound() {
+  async outbound(scheduleIds?: string[]) {
+    if (scheduleIds?.length === 0) return;
     const c = await this.ensure();
     if (!c) return;
     const path = `calendars/${encodeURIComponent(c.calendar_id)}/events`;
-    const [sessions, topics, materials] = await Promise.all([
-      all(this.uid, "reviewSchedules"),
-      all(this.uid, "topics"),
-      all(this.uid, "topicMaterials"),
+    const [sessions, mappings] = scheduleIds
+      ? await Promise.all([
+          getByIds(this.uid, "reviewSchedules", scheduleIds),
+          getByIds(this.uid, "calendarEvents", scheduleIds),
+        ])
+      : await Promise.all([
+          pendingSchedules(collection(this.uid, "reviewSchedules"))
+            .get()
+            .then(
+              (snapshot) => new Map(records(snapshot).map((s) => [s.id, s])),
+            ),
+          collection(this.uid, "calendarEvents")
+            .where("sync_status", "in", ["pending", "synced", "blocked"])
+            .get()
+            .then(
+              (snapshot) => new Map(records(snapshot).map((m) => [m.id, m])),
+            ),
+        ]);
+    const active = [...sessions.values()].filter(
+      (s) => s.status === "pending" && s.scheduled_at,
+    );
+    if (!scheduleIds) {
+      const missing = active.filter((s) => !mappings.has(s.id));
+      // Deleted or other legacy mappings may allow recreation with their saved event ID.
+      for (const [id, mapping] of await getByIds(
+        this.uid,
+        "calendarEvents",
+        missing.map((s) => s.id),
+      ))
+        mappings.set(id, mapping);
+    }
+    const [topics, materials] = await Promise.all([
+      getByIds(
+        this.uid,
+        "topics",
+        active.map((s) => s.topic_id),
+      ),
+      getByIds(
+        this.uid,
+        "topicMaterials",
+        active.map((s) => s.topic_id),
+      ),
     ]);
-    for (const s of sessions) {
-      const mappingRef = collection(this.uid, "calendarEvents").doc(s.id);
-      let mapping = (await mappingRef.get()).data();
-      const topic = topics.find((t) => t.id === s.topic_id);
+    // Remove superseded events before publishing their replacements.
+    const ids = [...new Set([...mappings.keys(), ...sessions.keys()])];
+    for (const scheduleId of ids) {
+      const s = sessions.get(scheduleId);
+      const topic = s && topics.get(s.topic_id);
+      const mapping = mappings.get(scheduleId);
       if (
-        s.status !== "pending" ||
-        topic?.status !== "active" ||
-        !s.scheduled_at
-      ) {
-        if (mapping && mapping.sync_status !== "deleted") {
-          try {
-            await this.request(`${path}/${mapping.google_event_id}`, {
-              method: "DELETE",
-            });
-          } catch (e: any) {
-            if (![404, 410].includes(e.status)) throw e;
-          }
-          await mappingRef.update({ sync_status: "deleted" });
-        }
+        s?.status === "pending" &&
+        topic?.status === "active" &&
+        s.scheduled_at
+      )
         continue;
-      }
-      if (mapping?.sync_status === "blocked") continue;
-      if (!mapping) {
-        await db.runTransaction(async (tx) => {
-          const current = await tx.get(mappingRef);
-          if (!current.exists)
-            tx.create(mappingRef, {
-              schedule_id: s.id,
-              google_event_id: "b" + digest(`${this.uid}:${s.id}`).slice(0, 40),
-              etag: null,
-              sync_status: "pending",
-              deletion_count: 0,
-            });
+      if (!mapping || mapping.sync_status === "deleted") continue;
+      // A full job's pending query may overlap a newer app mutation.
+      const current = await get(this.uid, "reviewSchedules", scheduleId);
+      if (
+        current?.status === "pending" &&
+        current.scheduled_at &&
+        current.scheduled_at !== s?.scheduled_at
+      )
+        continue;
+      try {
+        await this.request(`${path}/${mapping.google_event_id}`, {
+          method: "DELETE",
         });
-        mapping = (await mappingRef.get()).data()!;
+      } catch (e: any) {
+        if (![404, 410].includes(e.status)) throw e;
+      }
+      await this.updateMapping(
+        c.generation,
+        scheduleId,
+        mapping.google_event_id,
+        {
+          sync_status: "deleted",
+          publishedHash: null,
+        },
+      );
+    }
+    for (const s of active) {
+      const topic = topics.get(s.topic_id);
+      if (topic?.status !== "active") continue;
+      const mappingRef = collection(this.uid, "calendarEvents").doc(s.id);
+      let mapping = mappings.get(s.id);
+      if (mapping?.sync_status === "blocked") continue;
+      if (!mapping || mapping.sync_status === "deleted") {
+        mapping = await db.runTransaction(async (tx) => {
+          const [current, connection] = await Promise.all([
+            tx.get(mappingRef),
+            tx.get(connections.doc(this.uid)),
+          ]);
+          this.verifyGeneration(connection, c.generation);
+          if (current.exists && current.get("sync_status") !== "deleted")
+            return current.data()!;
+          // Google can retain a tombstone under the previous event ID.
+          const created = {
+            schedule_id: s.id,
+            google_event_id:
+              "b" +
+              digest(current.exists ? random() : `${this.uid}:${s.id}`).slice(
+                0,
+                40,
+              ),
+            etag: null,
+            sync_status: "pending",
+            deletion_count: 0,
+          };
+          if (current.exists) tx.set(mappingRef, created);
+          else tx.create(mappingRef, created);
+          return created;
+        });
       }
       const id = mapping.google_event_id;
       const description = eventDescription(
         topic,
-        materials.find((m) => m.id === s.topic_id)?.items ?? [],
+        materials.get(s.topic_id)?.items ?? [],
       );
       const body = {
         summary: "Blind Spot · " + topic.title,
@@ -276,6 +394,12 @@ export class CalendarSync {
           private: { blindSpotSchedule: s.id, blindSpotOwner: this.uid },
         },
       };
+      const publishedHash = digest(JSON.stringify(body));
+      if (
+        mapping.sync_status === "synced" &&
+        mapping.publishedHash === publishedHash
+      )
+        continue;
       let remote: any;
       try {
         remote = await this.request(`${path}/${id}`);
@@ -290,7 +414,10 @@ export class CalendarSync {
         remote &&
         remote.etag !== mapping.etag &&
         remote.start?.dateTime &&
-        Date.parse(remote.start.dateTime) !== Date.parse(s.scheduled_at)
+        (Date.parse(remote.start.dateTime) !== Date.parse(s.scheduled_at) ||
+          (mapping.publishedEnd &&
+            Date.parse(remote.end?.dateTime) !==
+              Date.parse(mapping.publishedEnd)))
       ) {
         await this.applyRemote(remote);
         continue;
@@ -330,39 +457,100 @@ export class CalendarSync {
           result = await this.request(`${path}/${id}`);
         }
       }
-      await db.runTransaction(async (tx) => {
-        const latest = await tx.get(mappingRef);
-        if (latest.data()?.google_event_id === id)
-          tx.update(mappingRef, { etag: result.etag, sync_status: "synced" });
+      await this.updateMapping(c.generation, s.id, id, {
+        etag: result.etag,
+        sync_status: "synced",
+        publishedHash,
+        publishedStart: body.start.dateTime,
+        publishedEnd: body.end.dateTime,
       });
     }
   }
-  async applyRemote(event: any) {
-    const mappings = await collection(this.uid, "calendarEvents")
-      .where("google_event_id", "==", event.id)
-      .limit(1)
-      .get();
-    if (mappings.empty) return;
-    const scheduleId = mappings.docs[0].id;
+  verifyGeneration(
+    snapshot: FirebaseFirestore.DocumentSnapshot,
+    generation: number,
+  ) {
+    if (!snapshot.get("connected") || snapshot.get("generation") !== generation)
+      fail(409, "Calendar connection changed");
+  }
+  async updateMapping(
+    generation: number,
+    scheduleId: string,
+    googleId: string,
+    data: Record<string, unknown>,
+  ) {
+    const ref = collection(this.uid, "calendarEvents").doc(scheduleId);
+    await db.runTransaction(async (tx) => {
+      const [latest, connection] = await Promise.all([
+        tx.get(ref),
+        tx.get(connections.doc(this.uid)),
+      ]);
+      this.verifyGeneration(connection, generation);
+      if (latest.get("google_event_id") === googleId) tx.update(ref, data);
+    });
+  }
+  async applyRemotePage(events: any[]) {
+    const byId = new Map(
+      events.filter((e) => typeof e.id === "string").map((e) => [e.id, e]),
+    );
+    const ids = [...byId.keys()];
+    const mappings = collection(this.uid, "calendarEvents");
+    for (let offset = 0; offset < ids.length; offset += 30) {
+      const matches = await mappings
+        .where("google_event_id", "in", ids.slice(offset, offset + 30))
+        .select("google_event_id", "etag", "sync_status")
+        .get();
+      for (const mapping of matches.docs)
+        await this.applyRemote(
+          byId.get(mapping.get("google_event_id")),
+          mapping,
+        );
+    }
+  }
+  async applyRemote(
+    event: any,
+    knownMapping?: FirebaseFirestore.QueryDocumentSnapshot,
+  ) {
+    const mappingSnapshot =
+      knownMapping ??
+      (
+        await collection(this.uid, "calendarEvents")
+          .where("google_event_id", "==", event.id)
+          .limit(1)
+          .get()
+      ).docs[0];
+    const unchanged =
+      event.status !== "cancelled" &&
+      event.etag &&
+      mappingSnapshot?.get("etag") === event.etag;
+    if (
+      !mappingSnapshot ||
+      unchanged ||
+      ["deleted", "blocked"].includes(mappingSnapshot.get("sync_status"))
+    )
+      return;
+    const scheduleId = mappingSnapshot.id;
     const now = new Date();
-    await mutate(this.uid, async (tx, read, rows, root) => {
-      const [mapping, session, p, allSessions] = await Promise.all([
+    await mutate(this.uid, async (tx, read, rows) => {
+      const [mapping, session, connection] = await Promise.all([
         read("calendarEvents", scheduleId),
         read("reviewSchedules", scheduleId),
-        read("preferences", "default"),
-        rows("reviewSchedules"),
+        tx.get(connections.doc(this.uid)),
       ]);
+      if (this.generation !== undefined)
+        this.verifyGeneration(connection, this.generation);
       if (
+        !connection.get("connected") ||
         !mapping ||
         !session ||
         mapping.google_event_id !== event.id ||
-        mapping.etag === event.etag ||
+        (event.status !== "cancelled" &&
+          event.etag &&
+          mapping.etag === event.etag) ||
         session.status !== "pending" ||
         mapping.sync_status === "blocked"
       )
         return;
-      const topic = await read("topics", session.topic_id);
-      if (!topic) return;
       if (event.status === "cancelled") {
         const count =
           mapping.last_deleted_at &&
@@ -380,6 +568,13 @@ export class CalendarSync {
           });
           return;
         }
+        const [topic, p, sessions, outbound] = await Promise.all([
+          read("topics", session.topic_id),
+          read("preferences", "default"),
+          rows("reviewSchedules", pendingSchedules),
+          prepareOutbound(tx, this.uid),
+        ]);
+        if (!topic) return;
         const external = session.scheduled_at
           ? [
               {
@@ -394,7 +589,7 @@ export class CalendarSync {
           topic,
           new Date(session.ideal_due_at),
           p as any,
-          allSessions,
+          sessions,
           now,
           { exclude: scheduleId, recovery: session.recovery, external },
         );
@@ -403,14 +598,19 @@ export class CalendarSync {
           mode: "automatic",
           adjustment_reason: "Deleted Google event automatically rescheduled",
         });
+        if (topic.pendingScheduleId === scheduleId)
+          tx.update(collection(this.uid, "topics").doc(topic.id), {
+            nextReviewAt: nextReviewSortKey(choice.scheduled_at),
+          });
         tx.update(collection(this.uid, "calendarEvents").doc(scheduleId), {
           google_event_id: "b" + digest(random()),
           etag: null,
           sync_status: "pending",
+          publishedHash: null,
           deletion_count: count,
           last_deleted_at: now.toISOString(),
         });
-        queue(tx, this.uid, root.revision + 1);
+        outbound([scheduleId]);
       } else if (event.start?.dateTime && event.end?.dateTime) {
         const start = Date.parse(event.start.dateTime),
           end = Date.parse(event.end.dateTime),
@@ -425,32 +625,45 @@ export class CalendarSync {
         const moved =
           start !== Date.parse(session.scheduled_at) ||
           duration !== session.duration;
-        if (moved)
+        if (moved) {
+          const topic = await read("topics", session.topic_id);
+          const scheduledAt = new Date(start).toISOString();
           tx.update(collection(this.uid, "reviewSchedules").doc(scheduleId), {
-            scheduled_at: new Date(start).toISOString(),
+            scheduled_at: scheduledAt,
             duration,
             mode: "manual",
             adjustment_reason: "Moved in Google Calendar",
           });
+          if (topic?.pendingScheduleId === scheduleId)
+            tx.update(collection(this.uid, "topics").doc(topic.id), {
+              nextReviewAt: scheduledAt,
+            });
+        }
         tx.update(collection(this.uid, "calendarEvents").doc(scheduleId), {
-          etag: event.etag,
+          etag: event.etag ?? null,
           sync_status: "synced",
+          publishedHash: null,
+          publishedStart: event.start.dateTime,
+          publishedEnd: event.end.dateTime,
         });
       }
     });
   }
-  async inbound() {
+  async inbound(resetCursor = false) {
     const c = await this.ensure();
     if (!c) return;
     const path = `calendars/${encodeURIComponent(c.calendar_id)}/events`;
-    let sync = c.sync_token,
+    let sync = resetCursor ? null : c.sync_token,
       page: string | undefined,
       finalToken: string | undefined,
       reset = false;
-    do {
+    const seen = new Set<string>();
+    for (;;) {
       const q = new URLSearchParams({
         showDeleted: "true",
         maxResults: "250",
+        fields:
+          "nextPageToken,nextSyncToken,items(id,etag,status,start(dateTime),end(dateTime))",
         ...(sync ? { syncToken: sync } : {}),
         ...(page ? { pageToken: page } : {}),
       });
@@ -461,73 +674,129 @@ export class CalendarSync {
         if (e.status === 410 && sync && !reset) {
           sync = null;
           reset = true;
-          result = await this.request(
-            `${path}?showDeleted=true&maxResults=250`,
-          );
+          page = undefined;
+          finalToken = undefined;
+          continue;
         } else throw e;
       }
-      for (const event of result.items ?? []) await this.applyRemote(event);
+      const events = result.items ?? [];
+      if (!sync) for (const event of events) seen.add(event.id);
+      await this.applyRemotePage(events);
       page = result.nextPageToken;
       finalToken = result.nextSyncToken ?? finalToken;
-    } while (page);
-    await db
-      .collection("calendarConnections")
-      .doc(this.uid)
-      .update({
-        sync_token: finalToken ?? sync ?? null,
-        last_sync_at: new Date().toISOString(),
-      });
-  }
-  async freeBusy() {
-    const c = await this.connection();
-    if (!c) return;
-    const now = new Date();
-    const data = await this.request("freeBusy", {
-      method: "POST",
-      body: {
-        timeMin: now.toISOString(),
-        timeMax: new Date(Date.now() + 32 * 86400000).toISOString(),
-        items: [{ id: "primary" }],
-      },
+      if (!page) break;
+    }
+    if (!finalToken)
+      throw new Error(
+        "Google Calendar did not return a synchronization cursor",
+      );
+    if (!sync) {
+      const mapped = await collection(this.uid, "calendarEvents")
+        .where("sync_status", "==", "synced")
+        .get();
+      for (const mapping of mapped.docs) {
+        const id = mapping.get("google_event_id");
+        if (id && !seen.has(id))
+          await this.applyRemote({ id, status: "cancelled" }, mapping);
+      }
+    }
+    await this.updateConnection(c.generation, {
+      sync_token: finalToken ?? sync ?? null,
+      last_sync_at: new Date().toISOString(),
     });
-    if (data.calendars?.primary?.errors?.length)
-      throw new Error("Primary calendar availability unavailable");
-    const external = data.calendars?.primary?.busy;
-    if (!Array.isArray(external))
-      throw new Error("Invalid availability response");
+  }
+  async availability(manual?: string, duration?: number) {
+    if (!(await this.connection())) return [];
+    return primaryAvailability(this.request.bind(this), manual, duration);
+  }
+  async freeBusy(scheduleIds?: string[], queueChanges = false) {
+    if (scheduleIds?.length === 0) return;
+    if (!(await this.connection())) return;
+    const isAutomatic = (s: FirebaseFirestore.DocumentData) =>
+      s.status === "pending" && s.mode === "automatic";
+    const candidates = scheduleIds
+      ? [
+          ...(
+            await getByIds(this.uid, "reviewSchedules", scheduleIds)
+          ).values(),
+        ].some(isAutomatic)
+      : !(
+          await pendingSchedules(collection(this.uid, "reviewSchedules"))
+            .where("mode", "==", "automatic")
+            .limit(1)
+            .get()
+        ).empty;
+    if (!candidates) return;
+    const now = new Date();
+    const external = await primaryAvailability(this.request.bind(this));
+    const ids = scheduleIds ? new Set(scheduleIds) : null;
+    const needsPlacement = (s: FirebaseFirestore.DocumentData) =>
+      isAutomatic(s) &&
+      (!ids || ids.has(s.id)) &&
+      (!s.scheduled_at ||
+        external.some(
+          (b) =>
+            Date.parse(b.start) <
+              Date.parse(s.scheduled_at) + s.duration * 60000 &&
+            Date.parse(b.end) > Date.parse(s.scheduled_at),
+        ));
+    // Avoid opening an owner transaction when primary availability changed no affected slots.
+    if (!external.length) {
+      const unscheduled = await pendingSchedules(
+        collection(this.uid, "reviewSchedules"),
+      )
+        .where("scheduled_at", "==", null)
+        .where("mode", "==", "automatic")
+        .limit(1)
+        .get();
+      if (unscheduled.empty) return;
+    }
     await mutate(this.uid, async (tx, read, rows) => {
-      const [p, sessions, topics] = await Promise.all([
+      const sessions = await rows("reviewSchedules", pendingSchedules);
+      const affected = sessions
+        .filter(needsPlacement)
+        .sort((a, b) => a.ideal_due_at.localeCompare(b.ideal_due_at));
+      if (!affected.length) return;
+      const [p, topics, outbound, connection] = await Promise.all([
         read("preferences", "default"),
-        rows("reviewSchedules"),
-        rows("topics"),
+        getByIds(
+          this.uid,
+          "topics",
+          affected.map((s) => s.topic_id),
+          tx,
+        ),
+        queueChanges ? prepareOutbound(tx, this.uid) : undefined,
+        tx.get(connections.doc(this.uid)),
       ]);
-      const updated = [...sessions];
-      for (const s of updated
-        .filter((s) => s.status === "pending" && s.mode === "automatic")
-        .sort((a, b) => a.ideal_due_at.localeCompare(b.ideal_due_at))) {
-        if (
-          s.scheduled_at &&
-          !external.some(
-            (b) =>
-              Date.parse(b.start) <
-                Date.parse(s.scheduled_at) + s.duration * 60000 &&
-              Date.parse(b.end) > Date.parse(s.scheduled_at),
-          )
-        )
-          continue;
-        const topic = topics.find((t) => t.id === s.topic_id);
+      if (this.generation !== undefined)
+        this.verifyGeneration(connection, this.generation);
+      if (!connection.get("connected")) return;
+      const changed: string[] = [];
+      for (const s of affected) {
+        const topic = topics.get(s.topic_id);
         if (!topic) continue;
         const choice = placement(
           { ...topic, duration: s.duration },
           new Date(s.ideal_due_at),
           p as any,
-          updated,
+          sessions,
           now,
           { exclude: s.id, recovery: s.recovery, external },
         );
+        if (
+          choice.scheduled_at === s.scheduled_at &&
+          choice.adjustment_reason === s.adjustment_reason
+        )
+          continue;
         Object.assign(s, choice);
+        changed.push(s.id);
         tx.update(collection(this.uid, "reviewSchedules").doc(s.id), choice);
+        if (topic.pendingScheduleId === s.id)
+          tx.update(collection(this.uid, "topics").doc(topic.id), {
+            nextReviewAt: nextReviewSortKey(choice.scheduled_at),
+          });
       }
+      outbound?.(changed);
     });
   }
   async watch() {
@@ -541,10 +810,10 @@ export class CalendarSync {
       return;
     const id = crypto.randomUUID(),
       token = random();
-    const ref = db.collection("calendarConnections").doc(this.uid);
-    await ref.update({
+    await this.updateConnection(c.generation, {
       pending_channel_id: id,
       pending_channel_token: hash(token),
+      pending_channel_message: null,
     });
     const result = await this.request(
       `calendars/${encodeURIComponent(c.calendar_id)}/events/watch`,
@@ -560,13 +829,23 @@ export class CalendarSync {
         },
       },
     );
-    await ref.update({
-      channel_id: id,
-      channel_token: hash(token),
-      resource_id: result.resourceId,
-      channel_expires_at: new Date(Number(result.expiration)).toISOString(),
-      pending_channel_id: null,
-      pending_channel_token: null,
+    // A notification may arrive before Google's watch response.
+    const ref = connections.doc(this.uid);
+    await db.runTransaction(async (tx) => {
+      const current = await tx.get(ref);
+      this.verifyGeneration(current, c.generation);
+      if (current.get("pending_channel_id") !== id)
+        fail(409, "Calendar watch changed");
+      tx.update(ref, {
+        channel_id: id,
+        channel_token: hash(token),
+        channel_message: current.get("pending_channel_message") ?? null,
+        resource_id: result.resourceId,
+        channel_expires_at: new Date(Number(result.expiration)).toISOString(),
+        pending_channel_id: null,
+        pending_channel_token: null,
+        pending_channel_message: null,
+      });
     });
   }
 }
@@ -576,35 +855,44 @@ export function eventDescription(topic: any, materials: { text: string }[]) {
   return `Study materials:\n${materials.map((m) => "• " + escape(m.text)).join("\n")}\n\nTags: ${(topic.tags ?? []).map(escape).join(", ")}\nImportance: ${topic.importance ?? "Not set"}/5\n\nOpen Blind Spot Interval to review and rate your recall:\n${origin()}/?review=${topic.id}`;
 }
 export async function disconnect(uid: string) {
-  await db.collection("calendarConnections").doc(uid).set(
+  await connections.doc(uid).set(
     {
       connected: false,
       encrypted_tokens: "",
       channel_token: null,
       pending_channel_token: null,
+      channel_expires_at: null,
       generation: Date.now(),
+      reconcileJobId: null,
+      nextReconcileAt: null,
+      inboundJobId: null,
+      outboundJobId: null,
     },
     { merge: true },
   );
   return { ok: true };
 }
 export async function resync(uid: string) {
-  await mutate(uid, async (tx, read, rows, root) => {
-    const events = await rows("calendarEvents");
-    for (const event of events.filter((e) => e.sync_status === "blocked"))
+  await mutate(uid, async (tx, _read, rows) => {
+    const ref = connections.doc(uid);
+    const connection = await tx.get(ref);
+    if (!connection.get("connected")) return;
+    const events = await rows("calendarEvents", (ref) =>
+      ref.where("sync_status", "==", "blocked"),
+    );
+    for (const event of events)
       tx.update(collection(uid, "calendarEvents").doc(event.id), {
         google_event_id: "b" + digest(random()),
         sync_status: "pending",
         etag: null,
+        publishedHash: null,
         deletion_count: 0,
         last_deleted_at: null,
       });
-    tx.set(
-      db.collection("calendarConnections").doc(uid),
-      { sync_token: null },
-      { merge: true },
-    );
-    queue(tx, uid, root.revision + 1, "reconcile");
+    const jobId = enqueue(tx, uid, "reconcile", connection.get("generation"), {
+      resetCursor: true,
+    });
+    tx.update(ref, { reconcileJobId: jobId });
   });
   return { ok: true };
 }
@@ -613,31 +901,43 @@ export async function webhook(headers: Record<string, unknown>) {
     token = hash(String(headers["x-goog-channel-token"] ?? "")),
     resource = String(headers["x-goog-resource-id"] ?? ""),
     number = String(headers["x-goog-message-number"] ?? "");
-  if (!id || !resource || !/^\d+$/.test(number)) fail(403, "Invalid webhook");
-  let matches = await db
-    .collection("calendarConnections")
-    .where("channel_id", "==", id)
-    .limit(1)
-    .get();
-  const pending = matches.empty;
-  if (pending)
-    matches = await db
-      .collection("calendarConnections")
-      .where("pending_channel_id", "==", id)
-      .limit(1)
-      .get();
-  const c = matches.docs[0]?.data();
   if (
-    !c?.connected ||
-    (pending ? c.pending_channel_token : c.channel_token) !== token ||
-    (!pending && c.resource_id && c.resource_id !== resource)
+    !id ||
+    id.length > 128 ||
+    !resource ||
+    resource.length > 256 ||
+    !/^\d{1,20}$/.test(number)
   )
-    fail(403, "Invalid webhook channel");
-  const key = digest(`webhook:${id}:${number}`);
+    fail(403, "Invalid webhook");
+  const active = await connections.where("channel_id", "==", id).limit(1).get();
+  const match =
+    active.docs[0] ??
+    (await connections.where("pending_channel_id", "==", id).limit(1).get())
+      .docs[0];
+  if (!match) fail(403, "Invalid webhook channel");
   await db.runTransaction(async (tx) => {
-    const ref = db.collection("syncJobs").doc(key);
-    const existing = await tx.get(ref);
-    if (!existing.exists)
-      queue(tx, matches.docs[0].id, 0, "inbound", `webhook:${id}:${number}`);
+    const current = await tx.get(match.ref);
+    const pending = current.get("pending_channel_id") === id;
+    const prefix = pending ? "pending_channel" : "channel";
+    if (
+      !current.get("connected") ||
+      current.get(prefix + "_id") !== id ||
+      current.get(prefix + "_token") !== token ||
+      (!pending && current.get("resource_id") !== resource)
+    )
+      fail(403, "Invalid webhook channel");
+    const previous = current.get(prefix + "_message");
+    if (previous && BigInt(number) <= BigInt(previous)) return;
+    const existing = current.get("inboundJobId");
+    const queued = existing ? await tx.get(jobs.doc(existing)) : null;
+    const jobId =
+      queued?.get("status") === "pending" &&
+      queued.get("generation") === current.get("generation")
+        ? queued.id
+        : enqueue(tx, match.id, "inbound", current.get("generation"));
+    tx.update(match.ref, {
+      [prefix + "_message"]: number,
+      inboundJobId: jobId,
+    });
   });
 }

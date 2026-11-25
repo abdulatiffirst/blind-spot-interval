@@ -1,4 +1,5 @@
-import { useState, useId } from "react";
+import { translate } from "./i18n";
+import { useState, useId, useEffect, useRef } from "react";
 
 export function NumericInput({
   value,
@@ -6,12 +7,14 @@ export function NumericInput({
   min,
   max,
   decimal = false,
+  onValidity,
 }: {
   value: number;
   onChange: (value: number) => void;
   min: number;
   max: number;
   decimal?: boolean;
+  onValidity?: (valid: boolean) => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   const [showError, setShowError] = useState(false);
@@ -25,11 +28,20 @@ export function NumericInput({
     const number = Number(normalized);
     return valid && number >= min && number <= max ? number : null;
   }
-  const hint = `Enter ${decimal ? "a number" : "a whole number"} from ${min} to ${max}.`;
-  const invalid = showError && parse(text) === null;
+  const hint = translate(decimal ? "numberRange" : "integerRange", {
+    min,
+    max,
+  });
+  const input = useRef<HTMLInputElement>(null);
+  const valid = parse(text) !== null;
+  useEffect(() => {
+    input.current?.setCustomValidity(valid ? "" : hint);
+  }, [valid, hint]);
+  const invalid = showError && !valid;
   return (
     <>
       <input
+        ref={input}
         className="numeric-input"
         type="text"
         inputMode={decimal ? "decimal" : "numeric"}
@@ -41,6 +53,7 @@ export function NumericInput({
           const raw = e.currentTarget.value;
           const parsed = parse(raw);
           setDraft(raw);
+          onValidity?.(parsed !== null);
           e.currentTarget.setCustomValidity(parsed === null ? hint : "");
           if (parsed !== null) onChange(parsed);
         }}

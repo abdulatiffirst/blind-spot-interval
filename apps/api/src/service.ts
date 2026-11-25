@@ -13,6 +13,7 @@ import {
 } from "../../../packages/calendar-scheduler/src/index.ts";
 import {
   applyTopicPatch,
+  verifyPreview,
   defaults,
   safeUrl,
   type TopicInput,
@@ -143,7 +144,12 @@ export async function makeSchedule(
   user: string,
   topic: any,
   ideal: Date,
-  options: { manual?: Date; recovery?: boolean } = {},
+  options: {
+    manual?: Date;
+    recovery?: boolean;
+    external?: Busy[];
+    expectedStart?: string | null;
+  } = {},
 ) {
   const p = await preferences(user, tx),
     busy = await availability(user, tx);
@@ -152,10 +158,11 @@ export async function makeSchedule(
     now: new Date(),
     duration: topic.duration,
     preferences: p,
-    busy,
+    busy: [...busy, ...(options.external ?? [])],
     importance: topic.importance,
     ...options,
   });
+  verifyPreview(options.expectedStart, result.start);
   const [row] =
     await tx`INSERT INTO review_schedules(topic_id,ideal_due_at,scheduled_at,duration,mode,adjustment_reason) VALUES(${topic.id},${ideal},${result.start},${topic.duration},${result.mode},${result.reason}) RETURNING *`;
   return row;
@@ -164,7 +171,14 @@ export async function createTopic(
   user: string,
   input: TopicInput,
   idempotencyKey?: string,
+  getExternal?: (manual?: string, duration?: number) => Promise<Busy[]>,
 ) {
+  if (idempotencyKey && getExternal) {
+    const [existing] =
+      await sql`SELECT id FROM topics WHERE user_id=${user} AND idempotency_key=${idempotencyKey}`;
+    if (existing) return details(user, existing.id);
+  }
+  const external = await getExternal?.(input.scheduledAt, input.duration);
   let id = "";
   await sql.begin(async (tx) => {
     await lock(tx, user);
@@ -189,7 +203,11 @@ export async function createTopic(
       user,
       topic,
       coldStart(new Date(), input.initialKnowledge, p.timezone),
-      { manual: input.scheduledAt ? new Date(input.scheduledAt) : undefined },
+      {
+        external,
+        expectedStart: input.expectedStart,
+        manual: input.scheduledAt ? new Date(input.scheduledAt) : undefined,
+      },
     );
     await enqueue(tx, user);
   });

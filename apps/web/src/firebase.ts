@@ -63,21 +63,21 @@ export async function authToken(user?: User) {
 export function signInErrorMessage(error: unknown) {
   switch (error instanceof FirebaseError && error.code) {
     case "auth/popup-blocked":
-      return "Your browser blocked the Google sign-in window. Allow pop-ups for this site and try again.";
+      return "popupBlocked";
     case "auth/popup-closed-by-user":
-      return "The Google sign-in window closed. Try again to sign in.";
+      return "popupClosed";
     case "auth/timeout":
-      return "Google Sign-In timed out. Close the sign-in window and try again.";
+      return "authTimeout";
     case "auth/network-request-failed":
-      return "Could not reach Google Sign-In. Check your connection and try again.";
+      return "authNetwork";
     case "auth/web-storage-unsupported":
-      return "Google Sign-In could not use browser storage. Allow site storage for this site and try again.";
+      return "authStorage";
     case "auth/unauthorized-domain":
-      return "Google Sign-In is unavailable on this domain. Contact support.";
+      return "authDomain";
     case "auth/account-exists-with-different-credential":
-      return "An account already exists with a different sign-in method. Contact support.";
+      return "authExists";
     default:
-      return "Google Sign-In did not complete. Try again.";
+      return "authIncomplete";
   }
 }
 export async function login() {

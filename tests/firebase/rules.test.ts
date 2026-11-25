@@ -90,3 +90,17 @@ it("denies owner access to Calendar secrets, jobs and OAuth state", async () => 
   ])
     await assertFails(getDoc(doc(db, path)));
 });
+
+it("keeps Connect grants, tokens, registrations and confirmations server-only", async () => {
+  const db = env.authenticatedContext(uid).firestore();
+  for (const name of [
+    "mcpAccounts",
+    "mcpActions",
+    "mcpClients",
+    "mcpEphemeral",
+  ]) {
+    const ref = doc(db, name, uid);
+    await assertFails(getDoc(ref));
+    await assertFails(setDoc(ref, { uid }));
+  }
+});

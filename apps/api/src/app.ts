@@ -8,6 +8,7 @@ import {
   preferencesInput,
   rating,
   topicInput,
+  previewInput,
 } from "../../../packages/shared/src/index.ts";
 import { coldStart } from "../../../packages/memory-engine/src/index.ts";
 import { schedule } from "../../../packages/calendar-scheduler/src/index.ts";
@@ -124,11 +125,18 @@ export async function buildApp() {
     return { user, csrf: req.csrf };
   });
   app.get("/api/v1/preferences", (req) => service.preferences(req.userId));
+  app.patch("/api/v1/preferences/language", async (req) => {
+    const { language } = z
+      .object({ language: z.enum(["en", "ru"]) })
+      .parse(req.body);
+    await sql`INSERT INTO user_preferences(user_id, settings) VALUES(${req.userId},${sql.json({ language })}) ON CONFLICT(user_id) DO UPDATE SET settings=user_preferences.settings || excluded.settings`;
+    return { language };
+  });
   app.patch("/api/v1/preferences", async (req) => {
     const p = preferencesInput.parse(req.body);
     await sql.begin(async (tx) => {
       await service.lock(tx, req.userId);
-      await tx`INSERT INTO user_preferences(user_id,settings) VALUES(${req.userId},${tx.json(p)}) ON CONFLICT(user_id) DO UPDATE SET settings=excluded.settings`;
+      await tx`INSERT INTO user_preferences(user_id,settings) VALUES(${req.userId},${tx.json(p)}) ON CONFLICT(user_id) DO UPDATE SET settings=user_preferences.settings || excluded.settings`;
       await tx`UPDATE users SET timezone=${p.timezone} WHERE id=${req.userId}`;
       await tx`UPDATE topics SET target_retention=(${tx.json(p.retention)}::jsonb->>(COALESCE(importance,3)-1))::real WHERE user_id=${req.userId}`;
       await service.enqueue(tx, req.userId);
@@ -156,6 +164,8 @@ export async function buildApp() {
           req.userId,
           topicInput.parse(req.body),
           z.string().max(100).optional().parse(req.headers["idempotency-key"]),
+          (manual, duration) =>
+            google.primaryBusy(req.userId, manual, duration),
         ),
       ),
   );
@@ -239,13 +249,7 @@ export async function buildApp() {
     return { ok: true };
   });
   app.get("/api/v1/schedule/preview", async (req) => {
-    const q = z
-        .object({
-          knowledge: z.coerce.number().int().min(1).max(5).optional(),
-          importance: z.coerce.number().int().min(1).max(5).optional(),
-          duration: z.coerce.number().int().min(5).max(180).default(15),
-        })
-        .parse(req.query),
+    const q = previewInput.parse(req.query),
       p = await service.preferences(req.userId),
       ideal = coldStart(new Date(), q.knowledge ?? null, p.timezone);
     return {
@@ -256,7 +260,14 @@ export async function buildApp() {
         now: new Date(),
         duration: q.duration,
         preferences: p,
-        busy: await service.availability(req.userId),
+        importance: q.importance,
+        manual: q.scheduledAt ? new Date(q.scheduledAt) : undefined,
+        busy: (
+          await Promise.all([
+            service.availability(req.userId),
+            google.primaryBusy(req.userId, q.scheduledAt, q.duration),
+          ])
+        ).flat(),
       }),
     };
   });

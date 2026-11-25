@@ -17,6 +17,7 @@ export const syncJob = onDocumentCreated(
   {
     document: "syncJobs/{jobId}",
     retry: true,
+    concurrency: 4,
     timeoutSeconds: 540,
     memory: "512MiB",
     secrets,
@@ -27,7 +28,7 @@ export const syncJob = onDocumentCreated(
 );
 export const reconcileCalendar = onSchedule(
   {
-    schedule: "every 5 minutes",
+    schedule: "* * * * *",
     timeoutSeconds: 540,
     memory: "512MiB",
     secrets,

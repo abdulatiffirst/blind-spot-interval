@@ -1,3 +1,4 @@
+import { translate, getLanguage, systemMessage } from "../i18n";
 import { connectCalendar } from "../api";
 import { ChevronLeft, ChevronRight, Link2, Plus } from "lucide-react";
 import { DateTime } from "luxon";
@@ -34,12 +35,13 @@ export function CalendarView({
     <>
       <div className="page-heading">
         <div>
-          <p className="eyebrow">FIND YOUR RHYTHM</p>
-          <h1>A little time to remember.</h1>
-          <p className="subtitle">Your review schedule · {prefs.timezone}</p>
+          <h1>{translate("calendar")}</h1>
+          <p className="subtitle">
+            {translate("scheduleZone", { zone: prefs.timezone })}
+          </p>
         </div>
         <Button className="primary" onClick={() => setEditor("new")}>
-          <Plus size={18} /> Add topic
+          <Plus size={18} /> {translate("addTopic")}
         </Button>
       </div>
       <div className="connection-card">
@@ -49,14 +51,15 @@ export function CalendarView({
         <div>
           <strong>
             {calendar.connected
-              ? "Google Calendar connected"
-              : "Your internal calendar is ready"}
+              ? translate("calendarConnected")
+              : translate("internalCalendar")}
           </strong>
           <p>
-            {calendar.error ??
-              (calendar.connected
-                ? "Reviews sync automatically. External availability uses your primary calendar."
-                : "Connect Google to account for your primary calendar’s busy times.")}
+            {calendar.error
+              ? systemMessage(calendar.error)
+              : calendar.connected
+                ? translate("calendarSyncInfo")
+                : translate("calendarConnectInfo")}
           </p>
         </div>
         {!calendar.connected && (
@@ -68,7 +71,7 @@ export function CalendarView({
               connectCalendar().catch((e) => onError(e.message));
             }}
           >
-            <Link2 size={16} /> Connect Google
+            <Link2 size={16} /> {translate("connectCalendar")}
           </a>
         )}
       </div>
@@ -76,7 +79,7 @@ export function CalendarView({
         <div>
           <Button
             className="icon-button"
-            aria-label="Previous period"
+            aria-label={translate("previousPeriod")}
             onClick={() =>
               setAnchor(
                 anchor.minus(
@@ -89,10 +92,12 @@ export function CalendarView({
           >
             <ChevronLeft />
           </Button>
-          <strong>{anchor.toFormat("LLLL yyyy")}</strong>
+          <strong>
+            {anchor.setLocale(getLanguage()).toFormat("LLLL yyyy")}
+          </strong>
           <Button
             className="icon-button"
-            aria-label="Next period"
+            aria-label={translate("nextPeriod")}
             onClick={() =>
               setAnchor(
                 anchor.plus(
@@ -105,16 +110,18 @@ export function CalendarView({
           >
             <ChevronRight />
           </Button>
-          <Button onClick={() => setAnchor(now.startOf("day"))}>Today</Button>
+          <Button onClick={() => setAnchor(now.startOf("day"))}>
+            {translate("today")}
+          </Button>
         </div>
         <div>
-          {["day", "week", "month"].map((v) => (
+          {(["day", "week", "month"] as const).map((v) => (
             <Button
               key={v}
               className={v === calendarMode ? "active" : ""}
               onClick={() => setCalendarMode(v)}
             >
-              {v}
+              {translate(v)}
             </Button>
           ))}
         </div>
@@ -142,7 +149,8 @@ export function CalendarView({
             key={day.toISO()}
           >
             <span>
-              {day.toFormat("ccc")} <strong>{day.day}</strong>
+              {day.setLocale(getLanguage()).toFormat("ccc")}{" "}
+              <strong>{day.day}</strong>
             </span>
             {reviews
               .filter(
@@ -156,11 +164,14 @@ export function CalendarView({
                 <button key={r.id} onClick={() => setReschedule(r)}>
                   <small>
                     {date(r.scheduled_at, prefs.timezone, "HH:mm")} ·{" "}
-                    {r.duration}m
+                    {translate("minutes", { count: r.duration })}
                   </small>
                   <strong>{r.title}</strong>
+                  <span>{translate("changeTime")}</span>
                   <small>
-                    {r.mode === "manual" ? "Manual override" : "Automatic"}
+                    {r.mode === "manual"
+                      ? translate("manualOverride")
+                      : translate("automatic")}
                   </small>
                 </button>
               ))}
@@ -173,9 +184,13 @@ export function CalendarView({
           <div className="banner" key={r.id}>
             <span>
               <strong>{r.title}</strong>:{" "}
-              {r.adjustment_reason ?? "Not scheduled"}
+              {r.adjustment_reason
+                ? systemMessage(r.adjustment_reason)
+                : translate("unscheduled")}
             </span>
-            <Button onClick={() => setReschedule(r)}>Adjust</Button>
+            <Button onClick={() => setReschedule(r)}>
+              {translate("adjust")}
+            </Button>
           </div>
         ))}
     </>

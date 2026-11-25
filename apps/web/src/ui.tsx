@@ -1,3 +1,4 @@
+import { translate } from "./i18n";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
@@ -24,7 +25,7 @@ export function Dialog({
   onClose,
 }: {
   title: string;
-  description?: string;
+  description: string;
   children: ReactNode;
   onClose: () => void;
 }) {
@@ -36,6 +37,18 @@ export function Dialog({
         <DialogPrimitive.Overlay className="overlay" />
         <DialogPrimitive.Content
           className="dialog"
+          onOpenAutoFocus={(e) => {
+            const input =
+              e.currentTarget instanceof HTMLElement
+                ? e.currentTarget.querySelector<HTMLInputElement>(
+                    ".topic-editor input",
+                  )
+                : null;
+            if (input) {
+              e.preventDefault();
+              input.focus({ preventScroll: true });
+            }
+          }}
           onEscapeKeyDown={(e) => {
             if (
               document.activeElement?.matches(
@@ -56,11 +69,14 @@ export function Dialog({
             <div>
               <DialogPrimitive.Title>{title}</DialogPrimitive.Title>
               <DialogPrimitive.Description>
-                {description ?? "Your knowledge, on your schedule."}
+                {description}
               </DialogPrimitive.Description>
             </div>
             <DialogPrimitive.Close asChild>
-              <Button className="icon-button" aria-label="Close dialog">
+              <Button
+                className="icon-button"
+                aria-label={translate("closeDialog")}
+              >
                 <X size={20} />
               </Button>
             </DialogPrimitive.Close>

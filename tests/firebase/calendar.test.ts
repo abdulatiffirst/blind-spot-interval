@@ -3,12 +3,12 @@ import { Timestamp } from "firebase-admin/firestore";
 import { db, collection } from "../../functions/src/store.ts";
 import {
   complete,
+  preview,
   ensureUser,
   createTopic,
   details,
   editTopic,
   reschedule,
-  digest,
 } from "../../functions/src/domain.ts";
 import {
   CalendarSync,
@@ -143,6 +143,33 @@ afterAll(async () => {
   await db.collection("syncLocks").doc(uid).delete();
   const jobs = await db.collection("syncJobs").where("uid", "==", uid).get();
   for (const j of jobs.docs) await j.ref.delete();
+});
+it("previews connected calendar conflicts without moving an existing review", async () => {
+  const input = { duration: 40, knowledge: 5, importance: 4 };
+  const baseline = await preview(uid, input);
+  const start = baseline.start!;
+  const end = new Date(Date.parse(start) + 40 * 60000).toISOString();
+  const calendar = new CalendarSync(uid, async (url) => {
+    expect(String(url)).toMatch(/\/freeBusy$/);
+    return Response.json({
+      calendars: { primary: { busy: [{ start, end }] } },
+    });
+  });
+  const automatic = await preview(uid, input, await calendar.availability());
+  expect(automatic.start).toBe(end);
+  const manual = await preview(
+    uid,
+    { ...input, scheduledAt: start },
+    await calendar.availability(start, 40),
+  );
+  expect(manual).toMatchObject({
+    start,
+    mode: "manual",
+    reason: "Manual time overlaps another event.",
+  });
+  expect((await details(uid, topic.id)).schedule.scheduled_at).toBe(
+    topic.schedule.scheduled_at,
+  );
 });
 it("creates a dedicated calendar once and reuses it across reconnect", async () => {
   await sync.ensure();
@@ -280,15 +307,15 @@ it("validates and deduplicates webhook notifications without trusting an event p
     "x-goog-message-number": "1",
   };
   await webhook(headers);
+  const outbox = db
+    .collection("syncJobs")
+    .where("uid", "==", uid)
+    .where("type", "==", "inbound");
+  const first = (await outbox.get()).docs.map((doc) => doc.id);
+  expect(first.length).toBeGreaterThan(0);
   await webhook(headers);
-  expect(
-    (
-      await db
-        .collection("syncJobs")
-        .doc(digest(`webhook:${channel}:1`))
-        .get()
-    ).exists,
-  ).toBe(true);
+  expect((await outbox.get()).docs.map((doc) => doc.id)).toEqual(first);
+  expect((await sync.connection())?.channel_message).toBe("1");
   await expect(
     webhook({ ...headers, "x-goog-channel-token": "forged" }),
   ).rejects.toMatchObject({ statusCode: 403 });
@@ -435,4 +462,87 @@ it("rejects expired OAuth state without contacting Google", async () => {
     statusCode: 400,
   });
   await db.collection("oauthStates").doc(hash(state)).delete();
+});
+
+it("coalesces webhook work while an inbound job is pending and ignores replayed numbers", async () => {
+  const ref = db.collection("calendarConnections").doc(uid);
+  const channel = random(),
+    token = random(),
+    job = random();
+  const generation = (await ref.get()).get("generation");
+  const queued = db.collection("syncJobs").doc(job);
+  await queued.create({
+    uid,
+    generation,
+    type: "inbound",
+    status: "pending",
+    attempts: 0,
+    retryAt: Date.now() + 60 * 60_000,
+  });
+  await ref.update({
+    connected: true,
+    channel_id: channel,
+    channel_token: hash(token),
+    resource_id: "resource",
+    channel_message: null,
+    inboundJobId: job,
+  });
+  const deliver = (number: string) =>
+    webhook({
+      "x-goog-channel-id": channel,
+      "x-goog-channel-token": token,
+      "x-goog-resource-id": "resource",
+      "x-goog-message-number": number,
+    });
+  await deliver("3");
+  await deliver("1");
+  await deliver("4");
+  const next = await ref.get();
+  expect(next.get("inboundJobId")).toBe(job);
+  expect(next.get("channel_message")).toBe("4");
+  expect((await queued.get()).get("attempts")).toBe(0);
+});
+
+it("publishes a new event after an unscheduled review gets another slot", async () => {
+  const owner = "calendar-tombstone-" + random();
+  const connection = db.collection("calendarConnections").doc(owner);
+  try {
+    await ensureUser(owner, {});
+    const created = await createTopic(owner, { title: "Tombstone test" });
+    const review = created.schedule;
+    const schedule = collection(owner, "reviewSchedules").doc(review.id);
+    const mapping = collection(owner, "calendarEvents").doc(review.id);
+    await connection.set({
+      connected: true,
+      generation: 1,
+      calendar_id: "old-event-fixture",
+      encrypted_tokens: encrypt({
+        access_token: "test-only",
+        expires_at: Date.now() + 3600000,
+      }),
+    });
+    const calendar = new CalendarSync(owner, async (url, options) => {
+      if (options?.method !== "DELETE") return transport(url, options);
+      const id = String(url).split("/").at(-1)!;
+      events.set(id, { ...events.get(id), status: "cancelled" });
+      return new Response(null, { status: 204 });
+    });
+    await calendar.outbound([review.id]);
+    const previous = (await mapping.get()).get("google_event_id");
+    await schedule.update({ scheduled_at: null });
+    await calendar.outbound([review.id]);
+    expect((await mapping.get()).get("sync_status")).toBe("deleted");
+    expect(events.get(previous).status).toBe("cancelled");
+    await schedule.update({ scheduled_at: review.scheduled_at });
+    await calendar.outbound([review.id]);
+    const current = await mapping.get();
+    expect(current.get("google_event_id")).not.toBe(previous);
+    expect(current.get("sync_status")).toBe("synced");
+    expect(events.get(current.get("google_event_id")).start.dateTime).toBe(
+      review.scheduled_at,
+    );
+  } finally {
+    await connection.delete();
+    await db.recursiveDelete(db.collection("users").doc(owner));
+  }
 });

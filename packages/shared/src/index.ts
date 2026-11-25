@@ -8,11 +8,28 @@ export const topicInput = z.object({
   duration: z.number().int().min(5).max(180).default(15),
   tags: z.array(z.string().trim().min(1).max(40)).max(20).default([]),
   materials: z.array(z.string().max(2000)).max(100).default([]),
+  expectedStart: z.iso.datetime({ offset: true }).nullable().optional(),
   scheduledAt: z.iso
     .datetime({ offset: true })
     .refine((v) => Date.parse(v) > Date.now(), "Choose a future time")
     .optional(),
 });
+export const previewInput = z.object({
+  knowledge: z.coerce.number().int().min(1).max(5).optional(),
+  importance: z.coerce.number().int().min(1).max(5).optional(),
+  duration: z.coerce.number().int().min(5).max(180).default(15),
+  scheduledAt: topicInput.shape.scheduledAt,
+});
+export function verifyPreview(
+  expected: string | null | undefined,
+  actual: string | null,
+) {
+  if (expected !== undefined && expected !== actual)
+    throw Object.assign(
+      new Error("Availability changed. Check the updated preview."),
+      { statusCode: 409 },
+    );
+}
 export function applyTopicPatch(current: unknown, patch: unknown) {
   const fields = z.record(z.string(), z.unknown());
   return topicInput.parse({ ...fields.parse(current), ...fields.parse(patch) });
@@ -29,26 +46,10 @@ export const preferencesInput = z
     daysAfter: z.number().int().min(0).max(14),
     retention: z.array(z.number().min(0.8).max(0.97)).length(5),
     onboarded: z.boolean().default(true),
+    language: z.enum(["en", "ru"]).optional(),
   })
   .refine((v) => v.studyStart < v.studyEnd, "Study end must follow start");
 export type Preferences = z.infer<typeof preferencesInput>;
 export type TopicInput = z.infer<typeof topicInput>;
-export const defaults: Preferences = {
-  timezone: "UTC",
-  studyStart: "09:00",
-  studyEnd: "21:00",
-  duration: 15,
-  daysBefore: 1,
-  daysAfter: 2,
-  retention: [0.85, 0.88, 0.9, 0.93, 0.95],
-  onboarded: false,
-};
+export { defaults, safeUrl } from "./client.ts";
 export const mappedRating = (n: number) => (n <= 2 ? 1 : n - 1);
-export function safeUrl(text: string) {
-  try {
-    const u = new URL(text);
-    return ["https:", "http:"].includes(u.protocol) ? u.href : null;
-  } catch {
-    return null;
-  }
-}

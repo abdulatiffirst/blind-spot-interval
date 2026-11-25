@@ -1,16 +1,21 @@
 import { randomUUID } from "node:crypto";
 import { db, type RecordData } from "./store.ts";
 import { CalendarSync } from "./calendar.ts";
-import { digest } from "./domain.ts";
+import {
+  connections,
+  jobs,
+  enqueue,
+  reconciliationDelay,
+} from "./calendar-queue.ts";
+
 export async function processJob(id: string, transport?: typeof fetch) {
-  const ref = db.collection("syncJobs").doc(id),
+  const ref = jobs.doc(id),
     token = randomUUID(),
     now = Date.now();
   const claim = await db.runTransaction<RecordData | null>(async (tx) => {
-    const s = await tx.get(ref);
-    if (!s.exists) return null;
-    const job = s.data()!;
+    const job = (await tx.get(ref)).data();
     if (
+      !job ||
       job.status === "done" ||
       job.status === "failed" ||
       job.retryAt > now ||
@@ -18,8 +23,19 @@ export async function processJob(id: string, transport?: typeof fetch) {
     )
       return null;
     const lock = db.collection("syncLocks").doc(job.uid);
-    const owner = await tx.get(lock);
-    if (owner.exists && owner.data()!.until > now) return null;
+    const [owner, connection] = await Promise.all([
+      tx.get(lock),
+      tx.get(connections.doc(job.uid)),
+    ]);
+    if (owner.get("until") > now) return null;
+    const generation = connection.get("generation");
+    if (
+      !connection.get("connected") ||
+      (job.generation !== undefined && job.generation !== generation)
+    ) {
+      tx.update(ref, { status: "done", expiresAt: expiry(), leaseUntil: 0 });
+      return null;
+    }
     tx.set(lock, { token, until: now + 600000 });
     tx.update(ref, {
       status: "running",
@@ -27,97 +43,159 @@ export async function processJob(id: string, transport?: typeof fetch) {
       leaseToken: token,
       leaseUntil: now + 600000,
     });
-    return { ...job, attempts: job.attempts + 1 };
+    return { ...job, attempts: job.attempts + 1, generation };
   });
   if (!claim) return false;
-  let error: string | null = null;
-  let connectionGeneration: number | undefined;
+  let error: string | null = null,
+    retryAfter = 0;
   try {
-    const sync = new CalendarSync(claim.uid, transport);
-    const connected = await sync.connection();
-    if (connected) {
-      connectionGeneration = connected.generation;
-      if (claim.type !== "outbound") await sync.inbound();
-      // Publish the committed internal schedule even if availability is temporarily unavailable.
-      // The job still retries the failed availability check and can adjust conflicts then.
+    const sync = new CalendarSync(claim.uid, transport, claim.generation);
+    if (claim.type !== "outbound")
+      await sync.inbound(claim.resetCursor === true);
+    if (claim.type !== "inbound") {
+      const targeted =
+        claim.type === "outbound"
+          ? (claim.scheduleIds ?? undefined)
+          : undefined;
+      const periodic =
+        claim.type === "reconcile" && claim.fullOutbound === false;
       try {
-        await sync.freeBusy();
+        await sync.freeBusy(targeted, periodic);
       } finally {
-        await sync.outbound();
+        if (!periodic) await sync.outbound(targeted);
       }
-      await sync.watch();
     }
+    if (claim.type === "reconcile") await sync.watch();
   } catch (e: any) {
     const status = e?.status;
+    retryAfter = e?.retryAfterMs ?? 0;
     error =
       Number.isInteger(status) && status >= 400 && status < 600
         ? `Google Calendar synchronization returned ${status}`
         : "Calendar synchronization failed. Check the connection and retry.";
   }
+  const terminal = !error || claim.attempts >= 10;
   await db.runTransaction(async (tx) => {
-    const connectionRef = db.collection("calendarConnections").doc(claim.uid);
-    const [s, l, connection] = await Promise.all([
+    const connectionRef = connections.doc(claim.uid);
+    const [s, lock, connection] = await Promise.all([
       tx.get(ref),
       tx.get(db.collection("syncLocks").doc(claim.uid)),
       tx.get(connectionRef),
     ]);
-    if (s.data()?.leaseToken !== token || l.data()?.token !== token) return;
+    if (s.get("leaseToken") !== token || lock.get("token") !== token) return;
+    const backoff = Math.min(3600000, 1000 * 2 ** Math.min(claim.attempts, 12));
     tx.update(ref, {
-      status: error ? (claim.attempts >= 10 ? "failed" : "pending") : "done",
+      status: error ? (terminal ? "failed" : "pending") : "done",
       error,
       retryAt:
         Date.now() +
-        Math.min(3600000, 1000 * 2 ** Math.min(claim.attempts, 12)),
+        Math.max(
+          retryAfter,
+          backoff + Math.floor(Math.random() * backoff * 0.2),
+        ),
       leaseUntil: 0,
-      ...(error && claim.attempts < 10
-        ? {}
-        : { expiresAt: new Date(Date.now() + 30 * 86400000) }),
+      ...(terminal ? { expiresAt: expiry() } : {}),
     });
-    tx.delete(l.ref);
+    tx.delete(lock.ref);
     if (
-      connection.get("connected") &&
-      connection.get("generation") === connectionGeneration
+      !connection.get("connected") ||
+      connection.get("generation") !== claim.generation
     )
-      tx.update(connectionRef, { error });
+      return;
+    const pointer = claim.type + "JobId";
+    const updates: RecordData = {};
+    if (terminal && error && claim.type !== "inbound")
+      updates.repairOutbound = true;
+    if (!error && claim.type === "reconcile" && claim.fullOutbound !== false)
+      updates.repairOutbound = false;
+    if (terminal && connection.get(pointer) === id) updates[pointer] = null;
+    // A successful inbound ping may coexist with an outbound or availability failure.
+    if (error || claim.type !== "inbound") updates.error = error;
+    if (
+      !error &&
+      claim.type === "reconcile" &&
+      (connection.get(pointer) === id || !connection.get(pointer))
+    ) {
+      const next = Date.now();
+      updates.nextReconcileAt =
+        next + reconciliationDelay(connection.data()!, next);
+    }
+    if (Object.keys(updates).length) tx.update(connectionRef, updates);
   });
+  if (error && terminal)
+    console.warn("Calendar job exhausted retries", {
+      type: claim.type,
+      attempts: claim.attempts,
+    });
   return true;
 }
+
+const expiry = () => new Date(Date.now() + 30 * 86_400_000);
+const concurrency = 8;
+async function batches<T>(items: T[], run: (value: T) => Promise<unknown>) {
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(items.length, concurrency) }, async () => {
+      for (; next < items.length;) await run(items[next++]);
+    }),
+  );
+}
+
 export async function reconcile() {
-  const connections = await db
-    .collection("calendarConnections")
-    .where("connected", "==", true)
-    .get();
-  for (const c of connections.docs) {
-    const id = digest(`reconcile:${c.id}:${Math.floor(Date.now() / 300000)}`);
-    const ref = db.collection("syncJobs").doc(id);
-    await db.runTransaction(async (tx) => {
-      const exists = await tx.get(ref);
-      if (!exists.exists)
-        tx.create(ref, {
-          uid: c.id,
-          type: "reconcile",
-          status: "pending",
-          attempts: 0,
-          retryAt: Date.now(),
-          createdAt: Date.now(),
-        });
-    });
-  }
-  const [pending, stale] = await Promise.all([
-    db
-      .collection("syncJobs")
+  const now = Date.now();
+  const [due, pending, stale] = await Promise.all([
+    connections
+      .where("connected", "==", true)
+      .where("nextReconcileAt", ">=", 0)
+      .where("nextReconcileAt", "<=", now)
+      .orderBy("nextReconcileAt")
+      .limit(250)
+      .get(),
+    jobs
       .where("status", "==", "pending")
-      .where("retryAt", "<=", Date.now())
+      .where("retryAt", "<=", now - 45_000)
       .orderBy("retryAt")
       .limit(100)
       .get(),
-    db
-      .collection("syncJobs")
+    jobs
       .where("status", "==", "running")
-      .where("leaseUntil", "<=", Date.now())
+      .where("leaseUntil", "<=", now)
       .orderBy("leaseUntil")
       .limit(100)
       .get(),
   ]);
-  for (const j of [...pending.docs, ...stale.docs]) await processJob(j.id);
+  // Newly created work is dispatched solely by the Firestore create trigger.
+  // The scheduler recovers delayed retries, contention and abandoned leases.
+  await Promise.all([
+    batches(due.docs, (doc) =>
+      db.runTransaction(async (tx) => {
+        const row = await tx.get(doc.ref);
+        if (
+          !row.get("connected") ||
+          typeof row.get("nextReconcileAt") !== "number" ||
+          row.get("nextReconcileAt") > now
+        )
+          return;
+        const pointer = row.get("reconcileJobId");
+        let queued = pointer ? await tx.get(jobs.doc(pointer)) : null;
+        if (
+          queued?.get("generation") !== row.get("generation") ||
+          !["pending", "running"].includes(queued?.get("status"))
+        )
+          queued = null;
+        const reconcileJobId =
+          queued?.id ??
+          enqueue(tx, doc.id, "reconcile", row.get("generation"), {
+            fullOutbound: false,
+          });
+        tx.update(doc.ref, {
+          reconcileJobId,
+          nextReconcileAt: now + reconciliationDelay(row.data()!, now),
+        });
+      }),
+    ),
+    batches([...pending.docs, ...stale.docs], async (job) => {
+      await processJob(job.id);
+    }),
+  ]);
 }

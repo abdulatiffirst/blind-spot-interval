@@ -1,6 +1,6 @@
 import { DateTime } from "luxon";
 import type { Preferences } from "../../shared/src/index.ts";
-export type Busy = { start: string; end: string };
+export type Busy = { start: string; end: string; external?: boolean };
 export function schedule(input: {
   ideal: Date;
   now: Date;
@@ -42,7 +42,7 @@ export function schedule(input: {
     const chosen = DateTime.fromJSDate(input.manual, { zone: p.timezone });
     const start = chosen.toMillis(),
       end = chosen.plus({ minutes: duration }).toMillis();
-    const conflict = busy.some(
+    const conflict = busy.find(
       (b) => start < Date.parse(b.end) && end > Date.parse(b.start),
     );
     const localEnd = chosen.plus({ minutes: duration });
@@ -54,7 +54,9 @@ export function schedule(input: {
       start: input.manual.toISOString(),
       mode: "manual",
       reason: conflict
-        ? "Manual time overlaps another review."
+        ? conflict.external
+          ? "Manual time overlaps another event."
+          : "Manual time overlaps another review."
         : outside
           ? "Manual time is outside your preferred study hours."
           : null,

@@ -33,15 +33,18 @@ test("create, edit, review, archive and restore a real topic", async ({
 }) => {
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: /Make room for/ }),
+    page.getByRole("heading", { name: /What did you learn/ }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Calendar", exact: true }).click();
   await page
     .getByRole("button", { name: "Add topic", exact: true })
     .first()
     .click();
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("textbox", { name: /Topic name/ }).fill("Logarithms");
-  await expect(dialog.getByLabel("Initial knowledge")).toHaveValue("");
+  await expect(
+    dialog.locator(".level-choices").first().locator('[aria-pressed="true"]'),
+  ).toHaveCount(0);
   const input = dialog.getByRole("combobox", { name: "Tags", exact: true });
   await input.fill("Math");
   await input.press("Space");

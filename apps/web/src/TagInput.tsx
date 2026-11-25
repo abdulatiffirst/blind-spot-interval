@@ -1,3 +1,4 @@
+import { translate, systemMessage } from "./i18n";
 import { useId, useState } from "react";
 import { addWords } from "./form-options";
 export function TagInput({
@@ -41,14 +42,14 @@ export function TagInput({
   }
   return (
     <div className="form-picker">
-      <label htmlFor={id}>Tags</label>
+      <label htmlFor={id}>{translate("tags")}</label>
       <div className="chip-field">
         {tags.map((t) => (
           <span className="input-chip" key={t}>
             {t}
             <button
               type="button"
-              aria-label={"Remove " + t}
+              aria-label={translate("removeTag", { tag: t })}
               onClick={() => {
                 setTags(tags.filter((x) => x !== t));
                 setError("");
@@ -66,7 +67,7 @@ export function TagInput({
           aria-autocomplete="list"
           aria-activedescendant={matches[active] ? id + active : undefined}
           aria-describedby={id + "status"}
-          placeholder="Add a tag…"
+          placeholder={translate("addTag")}
           value={draft}
           onFocus={() => setShow(true)}
           onBlur={() => setShow(false)}
@@ -127,7 +128,7 @@ export function TagInput({
       <div
         role="listbox"
         id={id + "list"}
-        aria-label="Suggested tags"
+        aria-label={translate("suggestedTags")}
         className="option-panel"
         hidden={!matches.length}
       >
@@ -146,7 +147,11 @@ export function TagInput({
         ))}
       </div>
       <small role="status" id={id + "status"}>
-        {error}
+        {error &&
+          error
+            .split(/(?<=\.) /)
+            .map(systemMessage)
+            .join(" ")}
       </small>
     </div>
   );
