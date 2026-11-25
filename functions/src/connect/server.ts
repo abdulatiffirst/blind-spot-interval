@@ -17,11 +17,13 @@ import { digest, preview } from "../domain.ts";
 import { fail } from "../store.ts";
 import {
   audit,
+  clientAuthMethods,
   handle,
   inspectConsent,
   limit,
   listGrants,
   oauth,
+  registrationRedirects,
   respondToConsent,
   revoke,
   scopeSchema,
@@ -442,9 +444,27 @@ function bodyLimit(
     return res.status(400).json({ error: "Batched requests are unsupported" });
   next();
 }
+function basicCredentials(header: string) {
+  const encoded = /^Basic ([A-Za-z0-9+/]+={0,2})$/i.exec(header)?.[1];
+  if (!encoded || encoded.length > 4096) return;
+  const decoded = Buffer.from(encoded, "base64").toString("utf8");
+  const colon = decoded.indexOf(":");
+  if (colon < 0) return;
+  const decode = (value: string) =>
+    decodeURIComponent(value.replaceAll("+", " "));
+  try {
+    return {
+      id: decode(decoded.slice(0, colon)),
+      credential: decode(decoded.slice(colon + 1)),
+    };
+  } catch {
+    return;
+  }
+}
+
 export function mountPublic(app: express.Express, settings: Config | null) {
   if (!settings) return;
-  const { provider, available } = oauth(settings);
+  const { provider, available, authenticateClient } = oauth(settings);
   const metadata = getOAuthProtectedResourceMetadataUrl(settings.resource);
   const handleMcp = toNodeHandler(
     createMcpHandler(
@@ -516,6 +536,40 @@ export function mountPublic(app: express.Express, settings: Config | null) {
       next();
     },
   );
+  // The SDK's endpoint handlers only support body credentials and cleartext
+  // comparison. Authenticate here, then pass the verified client ID to the SDK
+  // for normal OAuth grant validation, PKCE and revocation.
+  app.use(
+    ["/token", "/revoke"],
+    express.urlencoded({ extended: false, limit: maxBytes }),
+    asyncRoute(async (req, res, next) => {
+      if (req.method !== "POST") return next();
+      const { client_id: bodyId, client_secret: bodySecret } = req.body ?? {};
+      const header = req.headers.authorization;
+      const basic = header ? basicCredentials(header) : undefined;
+      const id = header ? basic?.id : bodyId;
+      const credential = header ? basic?.credential : bodySecret;
+      const method = header
+        ? "client_secret_basic"
+        : bodySecret === undefined
+          ? "none"
+          : "client_secret_post";
+      if (
+        (header && (bodyId !== undefined || bodySecret !== undefined)) ||
+        typeof id !== "string" ||
+        (credential !== undefined &&
+          (typeof credential !== "string" || credential.length > 1024)) ||
+        !(await authenticateClient(id, method, credential))
+      ) {
+        if (header)
+          res.setHeader("WWW-Authenticate", 'Basic realm="Blind Spot Connect"');
+        return res.status(header ? 401 : 400).json({ error: "invalid_client" });
+      }
+      req.body = { ...req.body, client_id: id };
+      delete req.body.client_secret;
+      next();
+    }),
+  );
   const issuerUrl = new URL(settings.origin);
   const oauthMetadata = createOAuthMetadata({
     provider,
@@ -525,8 +579,8 @@ export function mountPublic(app: express.Express, settings: Config | null) {
   app.get("/.well-known/oauth-authorization-server", (_req, res) =>
     res.json({
       ...oauthMetadata,
-      token_endpoint_auth_methods_supported: ["none"],
-      revocation_endpoint_auth_methods_supported: ["none"],
+      token_endpoint_auth_methods_supported: clientAuthMethods,
+      revocation_endpoint_auth_methods_supported: clientAuthMethods,
     }),
   );
   app.use(
@@ -593,7 +647,7 @@ export function mountAccount(app: express.Express, enabled: Config | null) {
         platforms: connectPlatformsForRedirects(
           enabled
             ? [
-                ...enabled.redirects,
+                ...(await registrationRedirects(enabled)),
                 ...enabled.clients.flatMap((client) => client.redirect_uris),
               ]
             : [],

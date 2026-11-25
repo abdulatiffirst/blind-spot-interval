@@ -5,7 +5,7 @@ import { auth, db, all, fail, collection } from "./store.ts";
 import * as domain from "./domain.ts";
 import * as calendar from "./calendar.ts";
 import { mountAccount, mountPublic } from "./connect/server.ts";
-import { config, type Config } from "./connect/oauth.ts";
+import { clientAuthMethods, config, type Config } from "./connect/oauth.ts";
 declare const __BLIND_SPOT_COMMIT__: string | null;
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 const cookie = (text: string | undefined, name: string) =>
@@ -30,6 +30,26 @@ export function createApp() {
     );
   }
   app.disable("x-powered-by");
+  if (connect) {
+    app.post("/register", (req, res, next) => {
+      res.on("finish", () => {
+        if (res.statusCode < 400) return;
+        const method = req.body?.token_endpoint_auth_method;
+        console.warn("Blind Spot Connect registration failed", {
+          status: res.statusCode,
+          method:
+            method === undefined
+              ? "omitted"
+              : (clientAuthMethods.find((allowed) => allowed === method) ??
+                "unsupported"),
+          redirects: Array.isArray(req.body?.redirect_uris)
+            ? Math.min(req.body.redirect_uris.length, 7)
+            : null,
+        });
+      });
+      next();
+    });
+  }
   app.use(express.json({ limit: "300kb" }));
   app.use((req, res, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");

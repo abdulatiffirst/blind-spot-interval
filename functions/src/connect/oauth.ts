@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import type {
   AuthorizationParams,
   OAuthServerProvider,
@@ -16,6 +16,7 @@ import { z } from "zod";
 import { digest } from "../domain.ts";
 import { auth, db, fail, type RecordData } from "../store.ts";
 import { emulator } from "../calendar.ts";
+import { connectPlatformForHost } from "../../../packages/shared/src/connect-platforms.ts";
 
 export const scopes = [
   "topics:read",
@@ -29,6 +30,13 @@ export const scopeSchema = z.enum(scopes);
 export const secret = () => randomBytes(32).toString("base64url");
 export const handle = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 const clientId = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
+export const clientAuthMethods = [
+  "none",
+  "client_secret_basic",
+  "client_secret_post",
+] as const;
+const clientAuthMethod = z.enum(clientAuthMethods);
+const registrationSeconds = 180 * 86400;
 const accessSeconds = 600;
 const refreshMillis = 30 * 86400_000;
 const grantMillis = 90 * 86400_000;
@@ -105,8 +113,9 @@ const redirect = z
   .max(1024)
   .url()
   .refine((value) => {
-    const url = new URL(value);
+    const url = URL.parse(value);
     if (
+      !url ||
       url.username ||
       url.password ||
       url.hash ||
@@ -124,6 +133,18 @@ const redirect = z
       ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
     );
   });
+function geminiRedirect(value: string) {
+  const url = URL.parse(value);
+  return (
+    !!url &&
+    url.protocol === "https:" &&
+    connectPlatformForHost(url.host) === "gemini" &&
+    /^\/[ra]\/[A-Za-z0-9_-]+$/.test(url.pathname) &&
+    value === url.origin + url.pathname
+  );
+}
+const geminiRedirects = z.array(redirect.refine(geminiRedirect)).max(180);
+
 const staticClient = z.strictObject({
   client_id: clientId,
   client_name: z.string().trim().min(1).max(100),
@@ -148,6 +169,9 @@ export function config() {
     origin: url.origin,
     resource: new URL("/api/mcp", url),
     writes: process.env.BLIND_SPOT_CONNECT_WRITES === "true",
+    geminiRegistry: process.env.BLIND_SPOT_CONNECT_GEMINI_REGISTRY === "true",
+    geminiPersistentRefresh:
+      process.env.BLIND_SPOT_CONNECT_GEMINI_PERSISTENT_REFRESH === "true",
     clients: z
       .array(staticClient)
       .max(50)
@@ -163,6 +187,24 @@ export function config() {
   };
 }
 export type Config = NonNullable<ReturnType<typeof config>>;
+
+export async function registrationRedirects(settings: Config) {
+  if (!settings.geminiRegistry) return settings.redirects;
+  const registry = (await db.doc("mcpConfiguration/gemini").get()).data();
+  const result = geminiRedirects.safeParse(registry?.redirect_uris ?? []);
+  if (!result.success) {
+    console.warn("Blind Spot Connect Gemini redirect registry rejected");
+    return settings.redirects;
+  }
+  return [...settings.redirects, ...result.data];
+}
+
+function rejectRegistration(reason: string): never {
+  console.warn("Blind Spot Connect registration rejected", { reason });
+  throw new InvalidClientMetadataError(
+    "Use a supported client method and approved callback URLs",
+  );
+}
 
 export function oauth(settings: Config) {
   const resource = settings.resource.href;
@@ -180,68 +222,134 @@ export function oauth(settings: Config) {
     if (target && target.href !== resource)
       throw new InvalidTargetError("Unknown resource");
   };
+  const registrationEnabled =
+    settings.redirects.length > 0 || settings.geminiRegistry;
+  async function lookupClient(id: string) {
+    if (!clientId.safeParse(id).success) return;
+    const provisioned = configured.get(id);
+    if (provisioned) return { info: provisioned, secretHash: undefined };
+    if (!registrationEnabled) return;
+    const row = (await db.collection("mcpClients").doc(id).get()).data();
+    if (!row || !fresh(row)) return;
+    const info: OAuthClientInformationFull = {
+      client_id: id,
+      client_name: row.client_name,
+      redirect_uris: row.redirect_uris,
+      token_endpoint_auth_method: row.token_endpoint_auth_method,
+      client_secret_expires_at: row.client_secret_expires_at,
+    };
+    if (info.redirect_uris.every((uri) => settings.redirects.includes(uri)))
+      return { info, secretHash: row.clientSecretHash as string | undefined };
+    if (settings.geminiRegistry) {
+      const approved = await registrationRedirects(settings);
+      if (info.redirect_uris.every((uri) => approved.includes(uri)))
+        return { info, secretHash: row.clientSecretHash as string | undefined };
+    }
+  }
+
   const clientsStore: OAuthServerProvider["clientsStore"] = {
     async getClient(id) {
-      if (!clientId.safeParse(id).success) return;
-      const provisioned = configured.get(id);
-      if (provisioned || !settings.redirects.length) return provisioned;
-      const registered = (
-        await db.collection("mcpClients").doc(id).get()
-      ).data();
-      if (
-        registered &&
-        fresh(registered) &&
-        registered.redirect_uris.every((uri: string) =>
-          settings.redirects.includes(uri),
-        )
-      )
-        return registered as OAuthClientInformationFull;
+      return (await lookupClient(id))?.info;
     },
-    ...(settings.redirects.length
+    ...(registrationEnabled
       ? {
           async registerClient(
-            input: Omit<OAuthClientInformationFull, "client_id"> & {
-              client_id?: string;
-            },
+            input: Omit<OAuthClientInformationFull, "client_id">,
           ) {
+            const method = clientAuthMethod.safeParse(
+              input.token_endpoint_auth_method ?? "client_secret_basic",
+            );
+            if (!method.success) rejectRegistration("unsupported_auth_method");
             if (
-              input.token_endpoint_auth_method !== "none" ||
               !input.redirect_uris.length ||
-              input.redirect_uris.length > 5 ||
-              !input.redirect_uris.every((uri) =>
-                settings.redirects.includes(uri),
-              ) ||
+              input.redirect_uris.length > 6 ||
+              !input.redirect_uris.every(
+                (uri) => redirect.safeParse(uri).success,
+              )
+            )
+              rejectRegistration("invalid_redirects");
+            const approved = input.redirect_uris.every((uri) =>
+              settings.redirects.includes(uri),
+            )
+              ? settings.redirects
+              : await registrationRedirects(settings);
+            if (!input.redirect_uris.every((uri) => approved.includes(uri)))
+              rejectRegistration("unapproved_redirect");
+            if (
               input.grant_types?.some(
                 (type) =>
                   !["authorization_code", "refresh_token"].includes(type),
               ) ||
               input.response_types?.some((type) => type !== "code")
             )
-              throw new InvalidClientMetadataError(
-                "Use public PKCE credentials and an approved callback URL",
-              );
+              rejectRegistration("unsupported_grant_or_response_type");
+            const confidential = method.data !== "none";
+            const clientSecret = confidential ? secret() : undefined;
+            const issuedAt = Math.floor(Date.now() / 1000);
             const registered = {
               client_id: "dcr_" + secret(),
               client_name: (
-                input.client_name || new URL(input.redirect_uris[0]).hostname
-              )
-                .trim()
-                .slice(0, 100),
+                input.client_name?.trim() ||
+                new URL(input.redirect_uris[0]).hostname
+              ).slice(0, 100),
               redirect_uris: input.redirect_uris,
-              token_endpoint_auth_method: "none",
+              token_endpoint_auth_method: method.data,
               grant_types: ["authorization_code", "refresh_token"],
               response_types: ["code"],
-              client_id_issued_at: Math.floor(Date.now() / 1000),
+              client_id_issued_at: issuedAt,
+              ...(confidential
+                ? { client_secret_expires_at: issuedAt + registrationSeconds }
+                : {}),
             };
             await db
               .collection("mcpClients")
               .doc(registered.client_id)
-              .create({ ...registered, expiresAt: expiry(180 * 86400_000) });
-            return registered;
+              .create({
+                ...registered,
+                ...(clientSecret
+                  ? { clientSecretHash: digest(clientSecret) }
+                  : {}),
+                expiresAt: new Date((issuedAt + registrationSeconds) * 1000),
+              });
+            return {
+              ...registered,
+              ...(clientSecret ? { client_secret: clientSecret } : {}),
+            };
           },
         }
       : {}),
   };
+  async function authenticateClient(
+    id: string,
+    method: string,
+    credential?: string,
+  ) {
+    const client = await lookupClient(id);
+    if (!client || method !== client.info.token_endpoint_auth_method)
+      return false;
+    if (method === "none")
+      return !client.secretHash && credential === undefined;
+    if (
+      !credential ||
+      !client.secretHash ||
+      !/^[0-9a-f]{64}$/.test(client.secretHash) ||
+      !client.info.client_secret_expires_at ||
+      client.info.client_secret_expires_at <= Date.now() / 1000
+    )
+      return false;
+    return timingSafeEqual(
+      Buffer.from(digest(credential), "hex"),
+      Buffer.from(client.secretHash, "hex"),
+    );
+  }
+  function persistentFor(client: OAuthClientInformationFull) {
+    return (
+      settings.geminiPersistentRefresh &&
+      (client.token_endpoint_auth_method === "client_secret_post" ||
+        client.token_endpoint_auth_method === "client_secret_basic") &&
+      client.redirect_uris.every(geminiRedirect)
+    );
+  }
   function validateCode(row: RecordData | undefined, client: string) {
     if (
       !row ||
@@ -252,19 +360,32 @@ export function oauth(settings: Config) {
       throw new InvalidGrantError("Invalid or expired authorization code");
     return row;
   }
-  function issue(tx: FirebaseFirestore.Transaction, principal: Principal) {
-    const access = secret(),
-      refresh = secret();
+  function issue(
+    tx: FirebaseFirestore.Transaction,
+    principal: Principal,
+    persistent: boolean,
+    existingRefresh?: {
+      ref: FirebaseFirestore.DocumentReference;
+      token: string;
+    },
+  ) {
+    const access = secret();
+    const refresh = existingRefresh?.token ?? secret();
     tx.create(transient("access", access), {
       ...principal,
       resource,
       expiresAt: expiry(accessSeconds * 1000),
     });
-    tx.create(transient("refresh", refresh), {
-      ...principal,
-      resource,
-      expiresAt: expiry(refreshMillis),
-    });
+    const expiresAt = expiry(refreshMillis);
+    if (existingRefresh)
+      tx.update(existingRefresh.ref, { scopes: principal.scopes, expiresAt });
+    else
+      tx.create(transient("refresh", refresh), {
+        ...principal,
+        resource,
+        expiresAt,
+        persistent,
+      });
     return {
       access_token: access,
       refresh_token: refresh,
@@ -349,12 +470,16 @@ export function oauth(settings: Config) {
             "Invalid authorization grant or redirect URI",
           );
         tx.delete(ref);
-        return issue(tx, {
-          uid: row.uid,
-          clientId: row.clientId,
-          grantId: row.grantId,
-          scopes: row.scopes,
-        });
+        return issue(
+          tx,
+          {
+            uid: row.uid,
+            clientId: row.clientId,
+            grantId: row.grantId,
+            scopes: row.scopes,
+          },
+          persistentFor(client),
+        );
       });
     },
     async exchangeRefreshToken(client, token, requested, target) {
@@ -383,14 +508,20 @@ export function oauth(settings: Config) {
         const selected = requested ? [...new Set(requested)] : row.scopes;
         if (!selected.every((scope: Scope) => row.scopes.includes(scope)))
           throw new InvalidScopeError("Cannot expand the original scopes");
-        tx.update(ref, { used: true });
+        const persistent = row.persistent === true && persistentFor(client);
+        if (!persistent) tx.update(ref, { used: true });
         return {
-          tokens: issue(tx, {
-            uid: row.uid,
-            clientId: row.clientId,
-            grantId: row.grantId,
-            scopes: selected,
-          }),
+          tokens: issue(
+            tx,
+            {
+              uid: row.uid,
+              clientId: row.clientId,
+              grantId: row.grantId,
+              scopes: selected,
+            },
+            persistent,
+            persistent ? { ref, token } : undefined,
+          ),
         };
       });
       if (result.tokens) return result.tokens;
@@ -443,7 +574,7 @@ export function oauth(settings: Config) {
         await revoke(row.uid, row.clientId, row.grantId);
     },
   };
-  return { provider, available };
+  return { provider, available, authenticateClient };
 }
 
 function consentValid(

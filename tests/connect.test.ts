@@ -18,6 +18,8 @@ const settings = {
   writes: true,
   clients: [],
   redirects: [],
+  geminiRegistry: false,
+  geminiPersistentRefresh: false,
 };
 async function discover(writes = true) {
   const [serverTransport, clientTransport] =
