@@ -1,3 +1,4 @@
+import { Timestamp } from "firebase-admin/firestore";
 import { z } from "zod";
 import { rating, topicInput } from "../../../packages/shared/src/index.ts";
 import { CalendarSync } from "../calendar.ts";
@@ -7,6 +8,7 @@ import {
   db,
   fail,
   get,
+  requireActiveAccount,
   type MutationGuard,
   type RecordData,
 } from "../store.ts";
@@ -14,6 +16,7 @@ import {
   account,
   activeGrant,
   audit,
+  matchingGrant,
   type Principal,
   type Scope,
 } from "./oauth.ts";
@@ -65,6 +68,14 @@ const current = (row: RecordData | undefined, uid: string) => {
     fail(404, "Confirmation unavailable or expired");
   return row;
 };
+function sameRequest(row: RecordData, expected: RecordData) {
+  return (
+    row.uid === expected.uid &&
+    row.grantId === expected.grantId &&
+    row.signature === expected.signature &&
+    row.approveUntil.toMillis() === expected.approveUntil.toMillis()
+  );
+}
 async function target(uid: string, reviewId: string) {
   const review = await get(uid, "reviewSchedules", reviewId);
   if (!review) fail(404, "Review not found");
@@ -142,12 +153,15 @@ async function receipt(row: RecordData) {
       : {}),
   };
 }
+class AutomaticApprovalChanged extends Error {}
 export async function requestMutation(
   p: Principal,
   name: WriteName,
   input: Input,
   origin: string,
 ) {
+  if (!p.scopes.includes(writeScopes[name]))
+    fail(403, "Application write access is unavailable");
   const actionId = domain.digest(
     JSON.stringify([p.uid, p.clientId, name, input.idempotencyKey]),
   );
@@ -183,34 +197,54 @@ export async function requestMutation(
       );
     }
     existing = await db.runTransaction(async (tx) => {
+      await requireActiveAccount(p.uid, tx);
       const [owner, action] = await Promise.all([
         tx.get(account(p.uid)),
         tx.get(ref),
       ]);
       const ownerData = owner.data();
-      if (!activeGrant(ownerData, p))
-        fail(403, "Application access was revoked");
+      const grant = matchingGrant(ownerData, p);
+      if (!grant?.scopes.includes(writeScopes[name]))
+        fail(403, "Application write access is unavailable");
       const latest = action.data();
       if (latest && latest.expiresAt.toMillis() > Date.now())
         return check(latest);
-      const application = ownerData?.grants[domain.digest(p.clientId)].name;
+
       const row = {
         ...p,
-        application,
+        application: grant.name,
+        automatic: grant.approvalMode === "allow" && !preview.warnings?.length,
         name,
         input,
         signature,
         state: "pending",
         preview,
-      };
-      tx.set(ref, {
-        ...row,
-        approveUntil: expiry(600_000),
+        approveUntil: Timestamp.fromDate(expiry(600_000)),
         expiresAt: expiry(15 * 60_000),
-      });
+      };
+      tx.set(ref, row);
       return row;
     });
   } else check(existing);
+  if (existing.state === "pending" && existing.automatic) {
+    try {
+      await applyAction(p.uid, actionId, existing, true);
+      existing = check(current((await ref.get()).data(), p.uid));
+    } catch (error) {
+      if (!(error instanceof AutomaticApprovalChanged)) throw error;
+      // Once a confirmation is offered, retries must keep requiring it even
+      // if the user later enables automatic execution again.
+      const expected = existing;
+      existing = await db.runTransaction(async (tx) => {
+        await requireActiveAccount(p.uid, tx);
+        const [action, owner] = await tx.getAll(ref, account(p.uid));
+        const row = check(current(action.data(), p.uid));
+        if (requirePending(row, owner.data(), expected, name))
+          tx.update(ref, { automatic: false });
+        return row;
+      });
+    }
+  }
   if (existing.state === "approved")
     return { state: "applied", result: await receipt(existing) };
   if (existing.state === "cancelled") return { state: "cancelled" };
@@ -241,43 +275,59 @@ export async function decideAction(
   const ref = actions.doc(actionId);
   const row = current((await ref.get()).data(), uid);
   const name = z.enum(writeNames).parse(row.name);
-  const requirePending = (
-    data: RecordData | undefined,
-    owner: RecordData | undefined,
-  ) => {
-    const pending = current(data, uid);
-    if (
-      !activeGrant(owner, pending as Principal) ||
-      !pending.scopes.includes(writeScopes[name])
-    )
-      fail(403, "Application access was revoked");
-    if (pending.state !== "pending") return false;
-    if (pending.approveUntil.toMillis() <= Date.now())
-      fail(409, "Confirmation expired");
-    return true;
-  };
   if (row.state !== "pending") return { state: row.state };
-  if (!allow) {
-    const state = await db.runTransaction(async (tx) => {
-      const [action, owner] = await Promise.all([
-        tx.get(ref),
-        tx.get(account(uid)),
-      ]);
-      if (!requirePending(action.data(), owner.data()))
-        return action.get("state");
-      tx.update(ref, { state: "cancelled", expiresAt: expiry(7 * 86400_000) });
-      return "cancelled";
-    });
-    if (state === "cancelled")
-      audit("mutation_cancelled:" + name, uid, row.clientId);
-    return { state };
-  }
+  if (allow) return applyAction(uid, actionId, row);
+  const state = await db.runTransaction(async (tx) => {
+    await requireActiveAccount(uid, tx);
+    const [action, owner] = await Promise.all([
+      tx.get(ref),
+      tx.get(account(uid)),
+    ]);
+    if (!requirePending(action.data(), owner.data(), row, name))
+      return action.get("state");
+    tx.update(ref, { state: "cancelled", expiresAt: expiry(7 * 86400_000) });
+    return "cancelled";
+  });
+  if (state === "cancelled")
+    audit("mutation_cancelled:" + name, uid, row.clientId);
+  return { state };
+}
+function requirePending(
+  data: RecordData | undefined,
+  owner: RecordData | undefined,
+  expected: RecordData,
+  name: WriteName,
+  automatic = false,
+) {
+  const pending = current(data, expected.uid);
+  if (!sameRequest(pending, expected)) fail(409, "Action request changed");
+  const grant = matchingGrant(owner, pending as Principal);
+  if (
+    !grant?.scopes.includes(writeScopes[name]) ||
+    !pending.scopes.includes(writeScopes[name])
+  )
+    fail(403, "Application access was revoked");
+  if (pending.state !== "pending") return false;
+  if (pending.approveUntil.toMillis() <= Date.now())
+    fail(409, "Confirmation expired");
+  if (automatic && (!pending.automatic || grant.approvalMode !== "allow"))
+    throw new AutomaticApprovalChanged();
+  return true;
+}
+async function applyAction(
+  uid: string,
+  actionId: string,
+  row: RecordData,
+  automatic = false,
+) {
+  const ref = actions.doc(actionId);
+  const name = z.enum(writeNames).parse(row.name);
   const guard: MutationGuard = async (tx) => {
     const [action, owner] = await Promise.all([
       tx.get(ref),
       tx.get(account(uid)),
     ]);
-    if (!requirePending(action.data(), owner.data()))
+    if (!requirePending(action.data(), owner.data(), row, name, automatic))
       fail(409, "Action already decided");
     if (name === "complete_review") {
       const { reviewId, rating } = completeInput.parse(row.input);
@@ -320,6 +370,7 @@ export async function decideAction(
       else data = { review: scheduleSummary(result) };
       tx.update(ref, {
         state: "approved",
+        executionMode: automatic ? "automatic" : "manual",
         receipt: { ...data, jobId: result.jobId ?? null },
         expiresAt: expiry(7 * 86400_000),
       });
@@ -354,10 +405,19 @@ export async function decideAction(
       });
     }
   } catch (error) {
-    const final = (await ref.get()).data()?.state;
-    if (final === "approved" || final === "cancelled") return { state: final };
+    const final = (await ref.get()).data();
+    if (
+      final &&
+      sameRequest(final, row) &&
+      (final.state === "approved" || final.state === "cancelled")
+    )
+      return { state: final.state };
     throw error;
   }
-  audit("mutation_applied:" + name, uid, row.clientId);
+  audit(
+    (automatic ? "mutation_auto_applied:" : "mutation_applied:") + name,
+    uid,
+    row.clientId,
+  );
   return { state: "approved" };
 }

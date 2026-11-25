@@ -15,7 +15,7 @@ export const legalCopy = {
       ],
       [
         "Connected AI applications",
-        "You authorize each connected AI application and choose the permissions it receives. Authorized applications such as ChatGPT, Claude or Gemini may receive learning topics, materials (including notes), ratings, review history, review times, study preferences and derived statistics through Blind Spot Connect, as permitted by your scopes. Approved write requests can create topics, complete reviews or reschedule pending reviews. Review schedule and sync results may reflect Calendar availability. Blind Spot Connect does not return Google tokens, personal Calendar event details or primary-calendar free/busy intervals to AI providers. Providers handle data they receive under their own policies. Disconnecting an application stops future authorized access. It does not remove information already shared with that provider.",
+        "You authorize each connected AI application and choose the permissions it receives. Authorized applications such as ChatGPT, Claude or Gemini may receive learning topics, materials (including notes), ratings, review history, review times, study preferences and derived statistics through Blind Spot Connect, as permitted by your scopes. Write requests can create topics, complete reviews or reschedule pending reviews. By default, each change requires your confirmation. You can explicitly allow scoped writes for an individual connection to apply automatically. Scheduling warnings still require confirmation. Review schedule and sync results may reflect Calendar availability. Blind Spot Connect does not return Google tokens, personal Calendar event details or primary-calendar free/busy intervals to AI providers. Providers handle data they receive under their own policies. Disconnecting an application stops future authorized access. It does not remove information already shared with that provider.",
       ],
       [
         "Infrastructure and security",
@@ -71,7 +71,7 @@ export const legalCopy = {
       ],
       [
         "Manage and disconnect AI applications",
-        "In Settings → Blind Spot Connect, review each connected app and its permissions. To change the scope, disconnect the app and authorize it again with the permissions you want. You can disconnect one app or all apps. When a write requires confirmation, check the action details in Blind Spot before approving or declining.",
+        "In Settings → Blind Spot Connect, review each connected app and its permissions. To change the scope, disconnect the app and authorize it again with the permissions you want. You can disconnect one app or all apps. For a connection with write access, use Action approval to require confirmation for each change or explicitly allow authorized changes to apply automatically. Scheduling warnings still require confirmation. Check the action details before approving or declining.",
       ],
       [
         "Delete your account or make a privacy request",
@@ -99,7 +99,7 @@ export const legalCopy = {
       ],
       [
         "Подключённые ИИ-приложения",
-        "Вы разрешаете доступ каждому приложению и выбираете его права. В рамках этих прав подключённые приложения, например ChatGPT, Claude или Gemini, могут получать темы, материалы (в том числе заметки), оценки, историю и время повторений, учебные настройки и статистику. Одобренные действия могут создавать темы, завершать или переносить предстоящие повторения. Расписание и результаты синхронизации могут зависеть от занятости в Календаре. Blind Spot Connect не передаёт ИИ-провайдерам токены Google, сведения о личных событиях или интервалы занятости основного календаря. Провайдеры обрабатывают полученные сведения по своим правилам. Отключение закрывает будущий доступ, а ранее переданные сведения остаются у провайдера.",
+        "Вы разрешаете доступ каждому приложению и выбираете его права. В рамках этих прав подключённые приложения, например ChatGPT, Claude или Gemini, могут получать темы, материалы (в том числе заметки), оценки, историю и время повторений, учебные настройки и статистику. Приложения с правом на изменения могут создавать темы, завершать или переносить предстоящие повторения. По умолчанию каждое изменение требует подтверждения. Вы можете явно разрешить автоматические изменения в рамках прав отдельного подключения. При предупреждениях о расписании подтверждение всё равно требуется. Расписание и результаты синхронизации могут зависеть от занятости в Календаре. Blind Spot Connect не передаёт ИИ-провайдерам токены Google, сведения о личных событиях или интервалы занятости основного календаря. Провайдеры обрабатывают полученные сведения по своим правилам. Отключение закрывает будущий доступ, а ранее переданные сведения остаются у провайдера.",
       ],
       [
         "Инфраструктура и безопасность",
@@ -155,7 +155,7 @@ export const legalCopy = {
       ],
       [
         "Управление доступом ИИ-приложений",
-        "В настройках Blind Spot Connect проверьте подключённые приложения и их права. Для изменения прав отключите приложение и подключите его снова с нужными разрешениями. Можно отключить одно или все приложения. Если изменение требует подтверждения, проверьте его детали в Blind Spot перед одобрением или отклонением.",
+        "В настройках Blind Spot Connect проверьте подключённые приложения и их права. Для изменения прав отключите приложение и подключите его снова с нужными разрешениями. Можно отключить одно или все приложения. Для подключения с правом на изменения можно требовать подтверждение каждого действия или явно разрешить автоматические изменения в рамках выданных прав. При предупреждениях о расписании подтверждение всё равно требуется. Перед одобрением или отклонением проверьте детали действия.",
       ],
       [
         "Удаление аккаунта и запросы о данных",

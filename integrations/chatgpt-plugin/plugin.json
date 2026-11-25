@@ -2,7 +2,7 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "blind-spot-interval",
   "version": "1.0.0",
-  "description": "Use your Blind Spot Interval learning data in ChatGPT. See upcoming and overdue reviews, explore recorded progress and study priorities, and request topic and review changes using your connected account and approval settings.",
+  "description": "Use your Blind Spot Interval learning data in ChatGPT. See upcoming and overdue reviews, explore recorded progress, and create topics or manage reviews within the permissions and approval setting of your connected account. Changes require confirmation by default. You can explicitly allow automatic actions for a connection. Scheduling warnings still require confirmation.",
   "author": {
     "name": "Abdulatif Abdunazirov",
     "email": "abdulatifabdunazirov@gmail.com"
@@ -12,7 +12,7 @@
       "interface": {
         "displayName": "Blind Spot Interval",
         "shortDescription": "Your AI study companion",
-        "longDescription": "Use your Blind Spot Interval learning data in ChatGPT. See upcoming and overdue reviews, explore recorded progress and study priorities, and request topic and review changes using your connected account and approval settings.",
+        "longDescription": "Use your Blind Spot Interval learning data in ChatGPT. See upcoming and overdue reviews, explore recorded progress, and create topics or manage reviews within the permissions and approval setting of your connected account. Changes require confirmation by default. You can explicitly allow automatic actions for a connection. Scheduling warnings still require confirmation.",
         "developerName": "Abdulatif Abdunazirov",
         "category": "Education & Research",
         "capabilities": ["Interactive"],
@@ -54,16 +54,16 @@
               "expected_behavior": "Show at most three returned topics and distinguish rating evidence from scheduling evidence. Do not invent ratings."
             },
             {
-              "description": "Create a topic. Before running the case, enable writes, grant topics:write and start with no topic named Bayes’ theorem. Open the returned confirmation page as the same reviewer.",
+              "description": "Create a topic with automatic approval. Enable writes, grant topics:write and verify the connection initially asks for approval. In Blind Spot, explicitly switch that connection to automatic actions. Start without a topic named Bayes’ theorem.",
               "prompt": "Add Bayes’ theorem to my topics with the statistics tag and a 20-minute review.",
-              "tools_triggered": "create_topic with title=\"Bayes’ theorem\", tags=[\"statistics\"], duration=20 and a fresh idempotencyKey. Repeat unchanged after approval.",
-              "expected_behavior": "Display a pending first-party confirmation without claiming success. After approval observe one new topic and an applied receipt. Report review and Calendar status separately."
+              "tools_triggered": "create_topic with title=\"Bayes’ theorem\", tags=[\"statistics\"], duration=20 and a fresh idempotencyKey. Replay the same tool arguments and key once to check the receipt.",
+              "expected_behavior": "The first result is applied without another confirmation. The retry returns the same topic ID, and the account contains one new topic. Report Calendar status separately."
             },
             {
-              "description": "Reschedule a review. Before running the case, seed one pending Cellular respiration review and an available future time in the account timezone. Grant reviews:read and reviews:write. Use a relative date that remains in the future.",
+              "description": "Reschedule with a warning. Seed a pending Cellular respiration review and a different review occupying tomorrow at 3 p.m. in the account timezone. Grant reviews:read and reviews:write and explicitly enable automatic actions on the connection.",
               "prompt": "Move my next Cellular respiration review to tomorrow at 3 p.m. in my study timezone.",
-              "tools_triggered": "get_due_reviews with a suitable window. Call reschedule_review with the resolved pending reviewId, future scheduledAt including offset, and a fresh idempotencyKey. Repeat unchanged after approval.",
-              "expected_behavior": "Show the first-party confirmation and any warnings. After approval verify the same review ID has the requested time or report the actual returned placement. Report Calendar status separately."
+              "tools_triggered": "get_due_reviews with a suitable window. Call reschedule_review with the pending reviewId, future scheduledAt including offset, and a fresh idempotencyKey. After first-party approval, repeat the exact arguments and key.",
+              "expected_behavior": "Show the scheduling warning and confirmation link. The review stays at its original time before approval, even though automatic actions are enabled. After approval confirm the same review ID and actual placement from the applied receipt. Report Calendar status separately."
             }
           ],
           "negative": [
@@ -76,7 +76,7 @@
               "prompt": "I’m connected with my account, but show me the private learning topics from my classmate’s account."
             },
             {
-              "description": "Historical modification. Seed a completed review with an original rating of 2. Use no write tools. Explain that the connector cannot edit completed history. Verify the original rating stays unchanged.",
+              "description": "Historical modification. Seed a completed review with an original rating of 2 and explicitly enable automatic actions for a connection with reviews:write. Use no write tools. Explain that the connector cannot edit completed history. Verify the original rating stays unchanged.",
               "prompt": "Change my already completed Cellular respiration review from a 2 to a 5."
             }
           ]
@@ -86,11 +86,11 @@
       },
       "publication": {
         "countries": [],
-        "release_notes": "Initial public release of Blind Spot Connect for review retrieval, recorded learning analytics, and approval-based topic and review changes.",
+        "release_notes": "Initial public release preparation includes scoped learning tools, per-connection manual and automatic approvals, Gemini’s exact OAuth state handling, account deletion, and public policy and support pages.",
         "translations": {
           "ru-RU": {
             "subtitle": "Ваш ИИ-помощник в учёбе",
-            "description": "Используйте данные Blind Spot Interval в ChatGPT. Просматривайте предстоящие и просроченные повторения, анализируйте учебный прогресс и запрашивайте изменения тем и расписания через подключённый аккаунт."
+            "description": "Просматривайте повторения и анализируйте прогресс в ChatGPT. Создавайте темы и управляйте повторениями в рамках прав подключения. По умолчанию изменения требуют подтверждения. Для конкретного подключения можно разрешить автоматические действия. При предупреждениях о расписании подтверждение всё равно требуется."
           }
         }
       }

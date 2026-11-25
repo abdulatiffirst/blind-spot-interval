@@ -44,3 +44,6 @@ export function connectPlatformsForRedirects(redirects: string[]) {
   }
   return platforms;
 }
+
+export const connectApprovalModes = ["ask", "allow"] as const;
+export type ConnectApprovalMode = (typeof connectApprovalModes)[number];

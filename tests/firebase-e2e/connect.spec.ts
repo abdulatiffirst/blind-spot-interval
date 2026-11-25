@@ -190,6 +190,34 @@ test("approves read and write consents and a topic, then revokes the app in Russ
     await expect(
       page.getByRole("textbox", { name: "MCP server URL" }),
     ).toBeHidden();
+    const approval = page.getByRole("combobox", { name: "Action approval" });
+    await expect(approval).toHaveValue("ask");
+    await approval.selectOption("allow");
+    const automaticDialog = page.getByRole("dialog", {
+      name: /Allow automatic actions for Connect Tests/,
+    });
+    await expect(automaticDialog).toContainText(
+      "Scheduling warnings will still need your approval",
+    );
+    await automaticDialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(approval).toHaveValue("ask");
+    await approval.selectOption("allow");
+    await capture(page, info, "approval-dark-en", automaticDialog);
+    await automaticDialog
+      .getByRole("button", { name: "Always allow authorized actions" })
+      .click();
+    await expect(approval).toHaveValue("allow");
+    expect(
+      (
+        await client.callTool({
+          name: "create_topic",
+          arguments: {
+            title: "Browser automatic execution",
+            idempotencyKey: crypto.randomUUID(),
+          },
+        })
+      ).structuredContent,
+    ).toMatchObject({ state: "applied" });
     await page.getByRole("button", { name: "Русский" }).click();
     const settings = page.getByRole("region", {
       name: "Подключённые ИИ-приложения",
@@ -198,7 +226,29 @@ test("approves read and write consents and a topic, then revokes the app in Russ
     await expect(settings.getByRole("button", { name: "Русский" })).toHaveCount(
       0,
     );
-    await expect(settings.getByRole("combobox")).toHaveCount(0);
+    const russianApproval = settings.getByRole("combobox", {
+      name: "Подтверждение действий",
+    });
+    await expect(russianApproval).toHaveValue("allow");
+    await expect(russianApproval.locator("option:checked")).toHaveText(
+      "Всегда разрешать авторизованные действия",
+    );
+    await russianApproval.selectOption("ask");
+    await expect(russianApproval).toHaveValue("ask");
+    await expect(
+      settings.getByText("Настройка подтверждения действий сохранена."),
+    ).toBeVisible();
+    expect(
+      (
+        await client.callTool({
+          name: "create_topic",
+          arguments: {
+            title: "Browser manual again",
+            idempotencyKey: crypto.randomUUID(),
+          },
+        })
+      ).structuredContent,
+    ).toMatchObject({ state: "confirmation_required" });
     await settings
       .getByText("Расширенные настройки подключения", { exact: true })
       .click();
