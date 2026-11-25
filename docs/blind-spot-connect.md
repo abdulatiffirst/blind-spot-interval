@@ -25,3 +25,14 @@ Validate every argument; bound results, requests and execution; reuse rate limit
 
 ## Acceptance
 Unit tests for schemas, tool mapping, invalid tokens, expired/revoked grants, wrong audience, scope restrictions, cross-user access and duplicate requests. Emulator integration tests for scheduling and Calendar sync behavior; no real Calendar writes in tests. Verify MCP initialize/list/call via official MCP Inspector. Run lint, typecheck, tests and build. Test each AI client independently; consumer app availability depends on platform, plan and region. Document configuration, rollback, deployment and any unverified compatibility. Do not deploy automatically.
+
+
+## Review history and learning intelligence (required in MVP)
+Expose five additional read-only MCP tools:
+- get_review_history: cursor-paginated completed review records across the authenticated user's topics; optional topic ID, tag, date range and rating filters.
+- get_topic_history: chronological history for one owned topic, including completion timestamps and recorded ratings; include archived topics where permitted.
+- get_learning_stats: deterministic aggregate counts, rating distributions, trends and completion statistics over a requested bounded period; document denominators and timezone.
+- get_weak_topics: rank topics by recent low recorded ratings and repeated difficulty, expose sample size and criteria; do not treat missing reviews as low ratings.
+- get_learning_profile: bounded summary of learning progress, due reviews, strengths and weak topics, with explicit data coverage and no speculative knowledge claims.
+
+Inspect existing reviewHistory schema and correction semantics; report only persisted facts and avoid counting corrected reviews twice. Use server-side bounded queries and indexes as needed, not unrestricted scans. Require an explicit reviews:history:read scope distinct from upcoming review access; enforce authenticated UID on all queries and topic lookups. Return only educational data necessary for the requested analysis, never account credentials or unrelated calendar events. No additional AI inference needed. History stays read-only; no MCP tool may rewrite past results except separately authorized existing review workflows. Test filters, pagination, archived topics, empty history, corrections, timezone boundaries, revoked access and cross-user isolation. Update consent UI and English/Russian descriptions. Make all five tools part of MVP acceptance.
