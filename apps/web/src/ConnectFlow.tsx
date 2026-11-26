@@ -30,7 +30,18 @@ import {
   type ConnectScope,
 } from "./connect-ui";
 
-type Consent = { name: string; host: string; scopes: ConnectScope[] };
+type Consent = {
+  name: string;
+  host: string;
+  scopes: ConnectScope[];
+  replacementRequired?: boolean;
+  replacements?: {
+    grantId: string;
+    name: string;
+    host: string;
+    connectedAt: string;
+  }[];
+};
 type Action = {
   action: "create_topic" | "complete_review" | "reschedule_review";
   application: string;
@@ -105,6 +116,7 @@ export function ConnectFlow({
   const path =
     "/connect/" + (mode === "authorize" ? "consent/" : "actions/") + address;
   const [selected, setSelected] = useState<ConnectScope[]>();
+  const [replacementGrantId, setReplacementGrantId] = useState("");
   const [working, setWorking] = useState(false);
   const [saveError, setSaveError] = useState(false);
   const [decision, setDecision] = useState<Action["state"]>();
@@ -144,8 +156,12 @@ export function ConnectFlow({
     ) ??
     [];
 
+  const replacement = consent?.replacements?.find(
+    (option) => option.grantId === replacementGrantId,
+  );
+  const mustChooseReplacement = !!consent?.replacementRequired && !replacement;
   async function decide(allow: boolean) {
-    if (working) return;
+    if (working || (allow && mustChooseReplacement)) return;
     setWorking(true);
     setSaveError(false);
     try {
@@ -153,7 +169,11 @@ export function ConnectFlow({
         const result = await api(
           path,
           "POST",
-          { scopes: allow ? scopes : [] },
+          {
+            scopes: allow ? scopes : [],
+            ...(allow &&
+              replacement && { replacementGrantId: replacement.grantId }),
+          },
           { user: identity },
         );
         location.replace(result.url);
@@ -161,7 +181,11 @@ export function ConnectFlow({
       }
       const result = await api(path, "POST", { allow }, { user: identity });
       setDecision(result.state);
-    } catch {
+    } catch (error) {
+      if (consent && (error as { status?: number }).status === 409) {
+        setReplacementGrantId("");
+        void request.refetch();
+      }
       setSaveError(true);
     }
     setWorking(false);
@@ -349,6 +373,41 @@ export function ConnectFlow({
                     );
                   })}
                 </div>
+                {!!consent.replacements?.length && (
+                  <div className="connect-approval">
+                    <label>
+                      <strong>{translate("connectReplacement")}</strong>
+                      <select
+                        value={replacementGrantId}
+                        disabled={working}
+                        onChange={(event) =>
+                          setReplacementGrantId(event.target.value)
+                        }
+                      >
+                        <option value="">
+                          {translate(
+                            consent.replacementRequired
+                              ? "connectChooseReplacement"
+                              : "connectKeepConnections",
+                          )}
+                        </option>
+                        {consent.replacements.map((option) => (
+                          <option key={option.grantId} value={option.grantId}>
+                            {translate("connectReplacementOption", {
+                              name: option.name,
+                              host: option.host,
+                              date: new Intl.DateTimeFormat(locale, {
+                                dateStyle: "medium",
+                                timeStyle: "short",
+                              }).format(new Date(option.connectedAt)),
+                            })}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <p>{translate("connectReplacementNote")}</p>
+                  </div>
+                )}
                 <p className="connect-sharing">
                   {translate("connectRevokeNote")}
                 </p>
@@ -374,7 +433,12 @@ export function ConnectFlow({
                 <Button
                   type="button"
                   className="primary"
-                  disabled={working || Boolean(consent && !scopes.length)}
+                  disabled={
+                    working ||
+                    Boolean(
+                      consent && (!scopes.length || mustChooseReplacement),
+                    )
+                  }
                   onClick={() => void decide(true)}
                 >
                   {translate(

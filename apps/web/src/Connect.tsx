@@ -229,11 +229,13 @@ function SetupDialog({
   resource,
   onClose,
   applications,
+  replacing,
 }: {
   platform: ConnectPlatform;
   resource: string | null;
   onClose: () => void;
   applications: Application[];
+  replacing: boolean;
 }) {
   const connected = applications.length > 0;
   const item = assistants[platform];
@@ -244,7 +246,9 @@ function SetupDialog({
         connected
           ? "connectConnectedTitle"
           : resource
-            ? "connectSetupTitle"
+            ? replacing
+              ? "connectReplaceTitle"
+              : "connectSetupTitle"
             : "connectRequirementsTitle",
         { platform: name },
       )}
@@ -252,7 +256,9 @@ function SetupDialog({
         connected
           ? "connectConnectedDescription"
           : resource
-            ? "connectSetupDescription"
+            ? replacing
+              ? "connectReplaceSetup"
+              : "connectSetupDescription"
             : "connectUnavailableDetail",
         { platform: name },
       )}
@@ -387,7 +393,10 @@ export function ConnectSettings({
   const locale = useLanguage();
   const cache = useQueryClient();
   const heading = useRef<HTMLHeadingElement>(null);
-  const [platform, setPlatform] = useState<ConnectPlatform>();
+  const [setup, setSetup] = useState<{
+    platform: ConnectPlatform;
+    previous?: string[];
+  }>();
   const [revokeTarget, setRevokeTarget] = useState<RevokeTarget>();
   const [approvalTarget, setApprovalTarget] = useState<Application>();
   const [revoked, setRevoked] = useState(false);
@@ -420,7 +429,15 @@ export function ConnectSettings({
       api(
         "/connect/revoke",
         "POST",
-        application ? { clientId: application.clientId } : {},
+        application
+          ? {
+              clientId: application.clientId,
+              // Earlier API versions accept only clientId.
+              ...(settings.data?.expiredPlatforms && {
+                grantId: application.grantId,
+              }),
+            }
+          : {},
         { user: identity },
       ),
   });
@@ -634,6 +651,41 @@ export function ConnectSettings({
                           }}
                         />
                       ))}
+                      {canSetUp &&
+                        data.expiredPlatforms &&
+                        (listing ? (
+                          <a
+                            className="button"
+                            href={listing}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            aria-label={translate("connectReplaceTitle", {
+                              platform: name,
+                            })}
+                          >
+                            {translate("connectReplace")}{" "}
+                            <ArrowUpRight size={15} aria-hidden="true" />
+                          </a>
+                        ) : (
+                          configured && (
+                            <Button
+                              type="button"
+                              aria-label={translate("connectReplaceTitle", {
+                                platform: name,
+                              })}
+                              onClick={() =>
+                                setSetup({
+                                  platform: key,
+                                  previous: platformApps.map(
+                                    (app) => app.grantId ?? app.clientId,
+                                  ),
+                                })
+                              }
+                            >
+                              {translate("connectReplace")}
+                            </Button>
+                          )
+                        ))}
                     </details>
                   </>
                 ) : listing ? (
@@ -642,18 +694,21 @@ export function ConnectSettings({
                     href={listing}
                     target="_blank"
                     rel="noopener noreferrer"
-                    aria-label={translate("connectListingFor", {
-                      platform: name,
-                    })}
+                    aria-label={translate(
+                      expired ? "connectReconnectTitle" : "connectListingFor",
+                      {
+                        platform: name,
+                      },
+                    )}
                   >
-                    {translate("connectListing")}
+                    {translate(expired ? "connectReconnect" : "connectListing")}
                     <ArrowUpRight size={15} aria-hidden="true" />
                   </a>
                 ) : (
                   <Button
                     className={configured ? "primary" : ""}
                     type="button"
-                    onClick={() => setPlatform(key)}
+                    onClick={() => setSetup({ platform: key })}
                     aria-label={translate(
                       !configured
                         ? "connectRequirementsTitle"
@@ -691,21 +746,24 @@ export function ConnectSettings({
             <ConnectionAddress resource={data.resource} />
           </details>
         )}
-      {platform && data && (
+      {setup && data && (
         <SetupDialog
-          key={platform}
-          platform={platform}
+          key={setup.platform}
+          platform={setup.platform}
           resource={
-            canSetUp && data.platforms?.[platform] ? data.resource : null
+            canSetUp && data.platforms?.[setup.platform] ? data.resource : null
           }
+          replacing={!!setup.previous}
           applications={
             canSetUp
               ? applications.filter(
-                  (app) => connectPlatformForHost(app.host) === platform,
+                  (app) =>
+                    connectPlatformForHost(app.host) === setup.platform &&
+                    !setup.previous?.includes(app.grantId ?? app.clientId),
                 )
               : []
           }
-          onClose={() => setPlatform(undefined)}
+          onClose={() => setSetup(undefined)}
         />
       )}
       {approvalTarget && (

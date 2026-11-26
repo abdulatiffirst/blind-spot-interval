@@ -2063,6 +2063,10 @@ summary {
   transform: rotate(180deg);
 }
 
+.connect-provider-details > .button {
+  margin-top: 8px;
+}
+
 .connect-application > summary {
   flex-wrap: wrap;
   gap: 8px;

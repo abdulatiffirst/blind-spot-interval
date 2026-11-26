@@ -72,22 +72,40 @@ const authorize = (
     response: fetch(origin + "/authorize?" + query, { redirect: "manual" }),
   };
 };
-async function consent(
-  scope: string[],
-  user = alice,
-  selected = scope,
-  client?: { client_id: string; redirect_uri: string; state?: string },
-) {
+type ClientRedirect = {
+  client_id: string;
+  redirect_uri: string;
+  state?: string;
+};
+async function openConsent(scope: string[], client?: ClientRedirect) {
   const { response, verifier, state } = authorize(scope, opaque(), client);
   const auth = await response;
   expect(auth.status, await auth.clone().text()).toBe(302);
   const fragment = new URL(auth.headers.get("location")!).hash.slice(1);
   expect(fragment).toMatch(/^[A-Za-z0-9_-]{43}$/);
   const cookie = auth.headers.get("set-cookie")!.split(";")[0];
-  const path = "/connect/consent/" + fragment;
+  return { path: "/connect/consent/" + fragment, cookie, verifier, state };
+}
+async function consent(
+  scope: string[],
+  user = alice,
+  selected = scope,
+  client?: ClientRedirect,
+) {
+  const { path, cookie, verifier, state } = await openConsent(scope, client);
   const inspected = await api(path, user, undefined, cookie);
   expect(inspected.status, await inspected.clone().text()).toBe(200);
-  const allowed = await api(path, user, { scopes: selected }, cookie);
+  const { replacementRequired, replacements } = await inspected.json();
+  const allowed = await api(
+    path,
+    user,
+    {
+      scopes: selected,
+      ...(selected.length &&
+        replacementRequired && { replacementGrantId: replacements[0].grantId }),
+    },
+    cookie,
+  );
   expect(allowed.status, await allowed.clone().text()).toBe(200);
   const url = new URL((await allowed.json()).url);
   expect(url.searchParams.get("state")).toBe(state);
@@ -191,6 +209,230 @@ describe.skipIf(process.env.BLIND_SPOT_CONNECT_ENABLED !== "true")(
           ),
         ),
       );
+    });
+
+    it("replaces only the grant explicitly selected, at successful code exchange", async () => {
+      const user = await signInAsEmulatedGoogleUser(origin);
+      const callback = "https://claude.ai/api/mcp/auth_callback";
+      const newClient = async () => {
+        const response = await register([callback], "none");
+        expect(response.status).toBe(201);
+        return {
+          client_id: (await response.json()).client_id as string,
+          redirect_uri: callback,
+        };
+      };
+      const originalClient = await newClient();
+      const separateClient = await newClient();
+      const incoming = await newClient();
+      const competitor = await newClient();
+      const connectClaude = async (
+        client: ClientRedirect,
+        permissions: string[],
+      ) => {
+        const issued = await consent(permissions, user, permissions, client);
+        const response = await exchange(issued.code, issued.verifier, client);
+        expect(response.status).toBe(200);
+        return (await response.json()) as Tokens;
+      };
+      const old = await connectClaude(originalClient, [
+        "topics:read",
+        "topics:write",
+      ]);
+      const other = await connectClaude(separateClient, [
+        "reviews:read",
+        "reviews:write",
+      ]);
+      const readSettings = () =>
+        api("/connect/applications", user).then((response) => response.json());
+      const original = (await readSettings()).applications;
+      for (const app of original) {
+        const changed = await api("/connect/applications/approval", user, {
+          clientId: app.clientId,
+          grantId: app.grantId,
+          approvalMode: "allow",
+        });
+        expect(changed.status).toBe(200);
+      }
+      const target = original.find(
+        (app: { clientId: string }) =>
+          app.clientId === originalClient.client_id,
+      );
+      const kept = original.find(
+        (app: { clientId: string }) =>
+          app.clientId === separateClient.client_id,
+      );
+      const same = await openConsent(["topics:read"], originalClient);
+      const sameReview = await api(
+        same.path,
+        user,
+        undefined,
+        same.cookie,
+      ).then((response) => response.json());
+      expect(sameReview).toMatchObject({
+        replacementRequired: true,
+        replacements: [{ grantId: target.grantId }],
+      });
+      expect(
+        (await api(same.path, user, { scopes: ["topics:read"] }, same.cookie))
+          .status,
+      ).toBe(409);
+      expect(
+        (await api(same.path, user, { scopes: [] }, same.cookie)).status,
+      ).toBe(200);
+
+      const startReplacement = async (provider: ClientRedirect) => {
+        const next = await openConsent(["topics:read"], provider);
+        const review = await api(next.path, user, undefined, next.cookie).then(
+          (response) => response.json(),
+        );
+        expect(review.replacementRequired).toBe(false);
+        expect(
+          review.replacements.map(
+            ({ grantId }: { grantId: string }) => grantId,
+          ),
+        ).toEqual(expect.arrayContaining([target.grantId, kept.grantId]));
+        expect(
+          (
+            await api(
+              next.path,
+              bob,
+              {
+                scopes: ["topics:read"],
+                replacementGrantId: target.grantId,
+              },
+              next.cookie,
+            )
+          ).status,
+        ).toBe(409);
+        const approved = await api(
+          next.path,
+          user,
+          {
+            scopes: ["topics:read"],
+            replacementGrantId: target.grantId,
+          },
+          next.cookie,
+        );
+        expect(approved.status).toBe(200);
+        return {
+          ...next,
+          code: new URL((await approved.json()).url).searchParams.get("code")!,
+        };
+      };
+      const [first, second] = await Promise.all([
+        startReplacement(incoming),
+        startReplacement(competitor),
+      ]);
+      expect((await exchange(first.code, opaque(), incoming)).status).toBe(400);
+      expect(
+        (
+          await exchange(first.code, first.verifier, {
+            ...incoming,
+            redirect_uri: redirect,
+          })
+        ).status,
+      ).toBe(400);
+      expect((await readSettings()).applications).toHaveLength(2);
+      expect((await mcp(old.access_token)).status).toBe(405);
+      const attempts = await Promise.all([
+        exchange(first.code, first.verifier, incoming),
+        exchange(second.code, second.verifier, competitor),
+      ]);
+      expect(attempts.map(({ status }) => status).sort()).toEqual([200, 400]);
+      const winner = attempts[0].ok ? incoming : competitor;
+      const issued = await attempts.find((response) => response.ok)!.json();
+      expect(issued.scope).toBe("topics:read");
+      expect((await mcp(old.access_token)).status).toBe(401);
+      expect((await mcp(other.access_token)).status).toBe(405);
+      const apps = (await readSettings()).applications;
+      expect(apps).toHaveLength(2);
+      expect(apps).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            clientId: winner.client_id,
+            approvalMode: "ask",
+            scopes: ["topics:read"],
+          }),
+          expect.objectContaining({
+            clientId: kept.clientId,
+            grantId: kept.grantId,
+            approvalMode: "allow",
+            scopes: ["reviews:read", "reviews:write"],
+          }),
+        ]),
+      );
+    });
+
+    it("reports confirmed grant expiry and cancels pending authorization on global revoke", async () => {
+      const user = await signInAsEmulatedGoogleUser(origin);
+      const tokens = await connect(["topics:read"], user);
+      const owner = db.collection("mcpAccounts").doc(user.uid);
+      const account = (await owner.get()).data()!;
+      const expired = Date.now() - 60_000;
+      expect(account.expiresAt.toMillis()).toBe(
+        account.grants[digest(clientId)].expires + 30 * 86_400_000,
+      );
+      await owner.update(`grants.${digest(clientId)}.expires`, expired);
+      const settings = () =>
+        api("/connect/applications", user).then((response) => response.json());
+      expect(await settings()).toMatchObject({
+        applications: [],
+        expiredPlatforms: ["other"],
+      });
+      expect((await mcp(tokens.access_token)).status).toBe(401);
+
+      const callback = "https://claude.ai/api/mcp/auth_callback";
+      const registered = await register([callback], "none");
+      const client = {
+        client_id: (await registered.json()).client_id,
+        redirect_uri: callback,
+      };
+      const claude = await consent(
+        ["topics:read"],
+        user,
+        ["topics:read"],
+        client,
+      );
+      expect(
+        (await exchange(claude.code, claude.verifier, client)).status,
+      ).toBe(200);
+      expect((await owner.get()).data()?.recentExpiries).toEqual({
+        other: expired,
+      });
+      expect(await settings()).toMatchObject({ expiredPlatforms: ["other"] });
+      const pending = await consent(["topics:read"], user);
+      expect((await api("/connect/revoke", user, {})).status).toBe(200);
+      expect((await exchange(pending.code, pending.verifier)).status).toBe(400);
+      expect(await settings()).toMatchObject({
+        applications: [],
+        expiredPlatforms: [],
+      });
+
+      // A new authorization can proceed after the explicit reset.
+      const replacement = await connect(["topics:read"], user);
+      expect((await mcp(replacement.access_token)).status).toBe(405);
+      const stale = account.grants[digest(clientId)];
+      expect(
+        (await api("/connect/revoke", user, { clientId, grantId: stale.id }))
+          .status,
+      ).toBe(200);
+      expect((await mcp(replacement.access_token)).status).toBe(405);
+    });
+
+    it("rejects a staged grant if the account is disabled or pending deletion", async () => {
+      const user = await signInAsEmulatedGoogleUser(origin);
+      const pending = await consent(["topics:read"], user);
+      await auth.updateUser(user.uid, { disabled: true });
+      expect((await exchange(pending.code, pending.verifier)).status).toBe(400);
+      await auth.updateUser(user.uid, { disabled: false });
+      expect(
+        (await api("/account/delete", user, { confirm: true })).status,
+      ).toBe(202);
+      expect((await exchange(pending.code, pending.verifier)).status).toBe(400);
+      expect(
+        (await db.collection("mcpAccounts").doc(user.uid).get()).exists,
+      ).toBe(false);
     });
 
     it("serves metadata, challenges unauthenticated requests, rejects foreign origins, and applies hosting security headers", async () => {
@@ -662,9 +904,7 @@ describe.skipIf(process.env.BLIND_SPOT_CONNECT_ENABLED !== "true")(
           expect(tool.annotations).toMatchObject({
             readOnlyHint: !write,
             openWorldHint: false,
-            destructiveHint: ["complete_review", "reschedule_review"].includes(
-              tool.name,
-            ),
+            destructiveHint: write && tool.name !== "create_topic",
             idempotentHint: true,
           });
           expect(tool._meta?.securitySchemes).toMatchObject([

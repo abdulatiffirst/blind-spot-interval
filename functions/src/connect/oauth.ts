@@ -17,6 +17,7 @@ import { digest } from "../domain.ts";
 import {
   auth,
   db,
+  deletionRef,
   fail,
   requireActiveAccount,
   type RecordData,
@@ -24,6 +25,8 @@ import {
 import { emulator } from "../calendar.ts";
 import {
   connectPlatformForHost,
+  connectPlatforms,
+  type ConnectPlatform,
   type ConnectApprovalMode,
 } from "../../../packages/shared/src/connect-platforms.ts";
 
@@ -61,6 +64,8 @@ const registrationSeconds = 180 * 86400;
 const accessSeconds = 600;
 const refreshMillis = 30 * 86400_000;
 const grantMillis = 90 * 86400_000;
+const expiryNoticeMillis = 30 * 86400_000;
+const codeMillis = 120_000;
 const fresh = (row: RecordData | undefined) =>
   !!row && row.expiresAt.toMillis() > Date.now();
 const transient = (kind: string, value: string) =>
@@ -91,21 +96,71 @@ const getGrant = (
   const grant = row?.grants?.[digest(client)] as Grant | undefined;
   return grant && grant.expires > Date.now() ? grant : undefined;
 };
+type GrantAccount = {
+  grants?: Record<string, Grant>;
+  recentExpiries?: Partial<Record<ConnectPlatform, number>>;
+  authorizationReset?: { id: string; until: number };
+};
+type GrantTarget = Pick<Grant, "id" | "clientId">;
+type PendingGrant = Pick<Grant, "name" | "host"> & {
+  replace?: GrantTarget;
+  resetId?: string;
+};
+function readGrants(row: GrantAccount | undefined, now: number) {
+  const active: Record<string, Grant> = {};
+  const expired = { ...row?.recentExpiries };
+  for (const [key, grant] of Object.entries(row?.grants ?? {})) {
+    if (grant.expires > now) active[key] = grant;
+    else {
+      const platform = connectPlatformForHost(grant.host);
+      expired[platform] = Math.max(expired[platform] ?? 0, grant.expires);
+    }
+  }
+  for (const platform of connectPlatforms) {
+    const ended = expired[platform];
+    if (ended === undefined || ended > now || ended + expiryNoticeMillis <= now)
+      delete expired[platform];
+  }
+  const reset = row?.authorizationReset;
+  return {
+    active,
+    expired,
+    reset: reset && reset.until > now ? reset : undefined,
+  };
+}
+
 function saveGrants(
   tx: FirebaseFirestore.Transaction,
   ref: FirebaseFirestore.DocumentReference,
-  grants: Record<string, Grant>,
+  { active, expired, reset }: ReturnType<typeof readGrants>,
 ) {
-  const active = Object.fromEntries(
-    Object.entries(grants).filter(([, grant]) => grant.expires > Date.now()),
+  const expirations = [
+    ...Object.values(active).map((grant) => grant.expires),
+    ...Object.values(expired),
+  ];
+  const ttl = Math.max(
+    reset?.until ?? 0,
+    ...expirations.map((value) => value + expiryNoticeMillis),
   );
-  const expirations = Object.values(active).map((grant) => grant.expires);
-  if (expirations.length)
+  if (ttl)
     tx.set(ref, {
       grants: active,
-      expiresAt: new Date(Math.max(...expirations)),
+      recentExpiries: expired,
+      ...(reset && { authorizationReset: reset }),
+      expiresAt: new Date(ttl),
     });
   else tx.delete(ref);
+}
+
+function canReplace(
+  previous: Grant,
+  incoming: Pick<Grant, "clientId" | "host">,
+) {
+  if (previous.clientId === incoming.clientId) return true;
+  const platform = connectPlatformForHost(incoming.host);
+  return (
+    platform !== "other" && connectPlatformForHost(previous.host) === platform
+  );
 }
 export function matchingGrant(
   row: RecordData | undefined,
@@ -423,6 +478,13 @@ export function oauth(settings: Config) {
       scope: principal.scopes.join(" "),
     };
   }
+  async function hasActiveIdentity(uid: string) {
+    const identity = await auth.getUser(uid).catch((error) => {
+      if (error.code !== "auth/user-not-found") throw error;
+      return null;
+    });
+    return !!identity && !identity.disabled;
+  }
   const provider: OAuthServerProvider = {
     clientsStore,
     async authorize(client, params: AuthorizationParams, res) {
@@ -487,16 +549,61 @@ export function oauth(settings: Config) {
       const ref = transient("code", code);
       return db.runTransaction(async (tx) => {
         const row = validateCode((await tx.get(ref)).data(), client.client_id);
-        if (
-          row.redirectUri !== redirectUri ||
-          !activeGrant(
-            (await tx.get(account(row.uid))).data(),
-            row as Principal,
-          )
-        )
+        if (row.redirectUri !== redirectUri)
           throw new InvalidGrantError(
             "Invalid authorization grant or redirect URI",
           );
+        if (
+          (await tx.get(deletionRef(row.uid))).exists ||
+          !(await hasActiveIdentity(row.uid))
+        )
+          throw new InvalidGrantError("Account is unavailable");
+        const owner = account(row.uid);
+        const current = (await tx.get(owner)).data();
+        const pending = row.pendingGrant as PendingGrant | undefined;
+        if (pending) {
+          const now = Date.now();
+          const state = readGrants(current, now);
+          const { active, expired } = state;
+          if (state.reset && state.reset.id !== pending.resetId)
+            throw new InvalidGrantError("Authorization was reset. Start again");
+          const grant: Grant = {
+            id: row.grantId,
+            clientId: row.clientId,
+            name: pending.name,
+            host: pending.host,
+            scopes: row.scopes,
+            connectedAt: new Date(now).toISOString(),
+            expires: now + grantMillis,
+            approvalMode: "ask",
+          };
+          if (pending.replace) {
+            const previousKey = digest(pending.replace.clientId);
+            const previous = active[previousKey];
+            if (
+              !previous ||
+              previous.id !== pending.replace.id ||
+              !canReplace(previous, grant)
+            )
+              throw new InvalidGrantError(
+                "The connection selected for replacement has changed",
+              );
+            delete active[previousKey];
+          }
+          const key = digest(grant.clientId);
+          if (active[key] || Object.keys(active).length >= 25)
+            throw new InvalidGrantError(
+              "The connections have changed. Start authorization again",
+            );
+          active[key] = grant;
+          delete expired[connectPlatformForHost(grant.host)];
+          saveGrants(tx, owner, state);
+        } else if (!activeGrant(current, row as Principal)) {
+          // Codes issued by the previous version already have their grant.
+          throw new InvalidGrantError(
+            "Invalid authorization grant or redirect URI",
+          );
+        }
         tx.delete(ref);
         return issue(
           tx,
@@ -525,12 +632,15 @@ export function oauth(settings: Config) {
         )
           throw new InvalidGrantError("Invalid or expired refresh token");
         const owner = account(row.uid);
-        const grants = (await tx.get(owner)).data()?.grants ?? {};
-        if (!activeGrant({ grants }, row as Principal))
-          throw new InvalidGrantError("Grant revoked");
+        const current = (await tx.get(owner)).data();
+        const grant = matchingGrant(current, row as Principal);
+        if (!grant) throw new InvalidGrantError("Grant revoked");
         if (row.used) {
-          delete grants[digest(client.client_id)];
-          saveGrants(tx, owner, grants);
+          const state = readGrants(current, Date.now());
+          const { active, expired } = state;
+          delete active[digest(client.client_id)];
+          delete expired[connectPlatformForHost(grant.host)];
+          saveGrants(tx, owner, state);
           return { replayUid: row.uid } as const;
         }
         const selected = requested ? [...new Set(requested)] : row.scopes;
@@ -567,11 +677,7 @@ export function oauth(settings: Config) {
         !activeGrant((await account(row.uid).get()).data(), row as Principal)
       )
         throw new InvalidTokenError("Invalid, expired or revoked token");
-      const identity = await auth.getUser(row.uid).catch((error) => {
-        if (error.code !== "auth/user-not-found") throw error;
-        return null;
-      });
-      if (!identity || identity.disabled)
+      if (!(await hasActiveIdentity(row.uid)))
         throw new InvalidTokenError("Account is unavailable");
       const granted = row.scopes.filter((scope: Scope) =>
         available.includes(scope),
@@ -616,15 +722,32 @@ function consentValid(
     );
   return row;
 }
-export async function inspectConsent(id: string, browser: string | undefined) {
+export async function inspectConsent(
+  uid: string,
+  id: string,
+  browser: string | undefined,
+) {
   const row = consentValid(
     (await transient("consent", id).get()).data(),
     browser,
   );
+  const host = new URL(row.redirectUri).host;
+  const { active } = readGrants((await account(uid).get()).data(), Date.now());
+  const existing = active[digest(row.clientId)];
+  const replacements = (existing ? [existing] : Object.values(active))
+    .filter((grant) => canReplace(grant, { clientId: row.clientId, host }))
+    .map(({ id, name, host, connectedAt }) => ({
+      grantId: id,
+      name,
+      host,
+      connectedAt,
+    }));
   return {
     name: row.name,
-    host: new URL(row.redirectUri).host,
+    host,
     scopes: row.scopes,
+    replacementRequired: !!existing,
+    replacements,
   };
 }
 export async function respondToConsent(
@@ -632,6 +755,7 @@ export async function respondToConsent(
   id: string,
   browser: string | undefined,
   selected: Scope[],
+  replacementGrantId?: string,
 ) {
   const ref = transient("consent", id),
     code = secret();
@@ -646,37 +770,44 @@ export async function respondToConsent(
     const url = new URL(row.redirectUri);
     url.searchParams.set("state", row.state);
     if (selected.length) {
-      const owner = account(uid),
-        key = digest(row.clientId);
-      const current: Record<string, Grant> =
-        (await tx.get(owner)).data()?.grants ?? {};
-      const grants = Object.fromEntries(
-        Object.entries(current).filter(
-          ([, grant]) => grant.expires > Date.now(),
-        ),
+      const { active, reset } = readGrants(
+        (await tx.get(account(uid))).data(),
+        Date.now(),
       );
-      if (!Object.hasOwn(grants, key) && Object.keys(grants).length >= 25)
+      const existing = active[digest(row.clientId)];
+      const replacement = replacementGrantId
+        ? Object.values(active).find((grant) => grant.id === replacementGrantId)
+        : undefined;
+      if (
+        (replacementGrantId &&
+          (!replacement ||
+            !canReplace(replacement, {
+              clientId: row.clientId,
+              host: url.host,
+            }))) ||
+        (existing && existing.id !== replacement?.id)
+      )
+        fail(409, "Choose a current connection to replace");
+      if (!replacement && Object.keys(active).length >= 25)
         fail(409, "Disconnect an application before adding another");
-      const grant: Grant = {
-        id: secret(),
-        clientId: row.clientId,
+      const pendingGrant: PendingGrant = {
         name: row.name,
         host: url.host,
-        scopes: selected,
-        connectedAt: new Date().toISOString(),
-        expires: Date.now() + grantMillis,
+        ...(reset && { resetId: reset.id }),
+        ...(replacement && {
+          replace: { id: replacement.id, clientId: replacement.clientId },
+        }),
       };
-      grants[key] = grant;
-      saveGrants(tx, owner, grants);
       tx.create(transient("code", code), {
         uid,
         clientId: row.clientId,
-        grantId: grant.id,
+        grantId: secret(),
         scopes: selected,
+        pendingGrant,
         resource: row.resource,
         challenge: row.challenge,
         redirectUri: row.redirectUri,
-        expiresAt: expiry(120_000),
+        expiresAt: expiry(codeMillis),
       });
       url.searchParams.set("code", code);
     } else url.searchParams.set("error", "access_denied");
@@ -690,19 +821,32 @@ export async function respondToConsent(
   );
   return { url: result.url };
 }
-export async function listGrants(uid: string) {
-  const row = (await account(uid).get()).data();
-  return (Object.values(row?.grants ?? {}) as Grant[])
-    .filter((grant) => grant.expires > Date.now())
-    .map(({ id, clientId, name, host, scopes, connectedAt, approvalMode }) => ({
-      grantId: id,
-      approvalMode: approvalMode ?? "ask",
-      clientId,
-      name,
-      host,
-      scopes,
-      connectedAt,
-    }));
+export async function listConnections(uid: string) {
+  const { active, expired } = readGrants(
+    (await account(uid).get()).data(),
+    Date.now(),
+  );
+  const grants = Object.values(active);
+  const connectedPlatforms = new Set(
+    grants.map((grant) => connectPlatformForHost(grant.host)),
+  );
+  return {
+    applications: grants.map(
+      ({ id, clientId, name, host, scopes, connectedAt, approvalMode }) => ({
+        grantId: id,
+        approvalMode: approvalMode ?? "ask",
+        clientId,
+        name,
+        host,
+        scopes,
+        connectedAt,
+      }),
+    ),
+    expiredPlatforms: connectPlatforms.filter(
+      (platform) =>
+        expired[platform] !== undefined && !connectedPlatforms.has(platform),
+    ),
+  };
 }
 export async function setApprovalMode(
   uid: string,
@@ -729,13 +873,24 @@ export async function setApprovalMode(
 export async function revoke(uid: string, client?: string, expected?: string) {
   const owner = account(uid);
   await db.runTransaction(async (tx) => {
-    const grants = (await tx.get(owner)).data()?.grants ?? {};
-    if (client) {
-      const key = digest(client);
-      if (!grants[key] || (expected && grants[key].id !== expected)) return;
-      delete grants[key];
+    if (!client) {
+      await requireActiveAccount(uid, tx);
+      saveGrants(tx, owner, {
+        active: {},
+        expired: {},
+        reset: { id: secret(), until: Date.now() + codeMillis },
+      });
+      return;
     }
-    saveGrants(tx, owner, client ? grants : {});
+    const current = (await tx.get(owner)).data() as GrantAccount | undefined;
+    const key = digest(client);
+    const grant = current?.grants?.[key];
+    if (!grant || (expected && grant.id !== expected)) return;
+    const state = readGrants(current, Date.now());
+    const { active, expired } = state;
+    delete active[key];
+    delete expired[connectPlatformForHost(grant.host)];
+    saveGrants(tx, owner, state);
   });
   audit(
     client ? "application_revoked" : "all_applications_revoked",

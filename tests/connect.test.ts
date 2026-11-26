@@ -60,6 +60,17 @@ describe("MCP schema and ranking contracts", () => {
         Object.keys(invalid).sort(),
       );
       for (const tool of tools) {
+        expect(tool.title, tool.name).toMatch(/^[A-Z][a-z]+ [A-Z]/);
+        const writes = [
+          "create_topic",
+          "complete_review",
+          "reschedule_review",
+        ].includes(tool.name);
+        expect(tool.annotations).toMatchObject({
+          readOnlyHint: !writes,
+          destructiveHint: writes && tool.name !== "create_topic",
+          openWorldHint: false,
+        });
         expect(tool.inputSchema.additionalProperties, tool.name).toBe(false);
         expect(tool.outputSchema, tool.name).toBeTruthy();
         const response = await client.callTool({

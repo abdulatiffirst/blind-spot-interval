@@ -50,6 +50,10 @@
         }
       },
       {
+        "source": "/.well-known/google-connected-apps",
+        "destination": "/google-connected-apps-verification.json"
+      },
+      {
         "source": "/api/**",
         "function": {
           "functionId": "api",
@@ -89,6 +93,19 @@
           {
             "key": "Content-Security-Policy",
             "value": "frame-ancestors 'none'"
+          }
+        ]
+      },
+      {
+        "source": "/.well-known/google-connected-apps",
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Cache-Control",
+            "value": "no-store"
           }
         ]
       },
