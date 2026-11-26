@@ -402,10 +402,20 @@ test("shows provider states and manual setup with a loading skeleton, retry and 
 
   await section.getByRole("button", { name: "Set up Gemini" }).click();
   let dialog = page.getByRole("dialog", { name: "Set up Gemini" });
-  await expect(dialog.locator("ol li")).toHaveCount(3);
+  await expect(dialog.getByRole("listitem")).toHaveText([
+    /Customize → Connectors → Custom/,
+    /paste it into Gemini, then select Next/,
+    /sign in and review the requested permissions/,
+  ]);
+  await expect(
+    dialog.getByText(/If Gemini reports an unapproved callback/),
+  ).toBeVisible();
   await expect(
     dialog.getByRole("link", { name: "Official setup guide" }),
-  ).toHaveAttribute("href", /developers.google.com/);
+  ).toHaveAttribute(
+    "href",
+    "https://support.google.com/gemini/answer/17209137",
+  );
   await dialog.getByRole("button", { name: "Copy URL" }).click();
   await expect(dialog.getByRole("status")).toHaveText("URL copied.");
   await expect(page.locator("html")).toHaveAttribute(
@@ -432,6 +442,28 @@ test("shows provider states and manual setup with a loading skeleton, retry and 
   });
   await expect(dialog.getByRole("textbox")).toHaveCount(0);
   await expect(dialog.getByText(/supports a remote server/)).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await page.getByRole("button", { name: "Русский" }).click();
+  await page.getByRole("button", { name: "Настройка Gemini" }).click();
+  dialog = page.getByRole("dialog", { name: "Настройка Gemini" });
+  await expect(dialog.getByRole("listitem")).toHaveText([
+    /Customize → Connectors → Custom/,
+    /вставьте его в Gemini и нажмите Next/,
+    /войдите и проверьте запрошенные разрешения/,
+  ]);
+  await expect(
+    dialog.getByText(/Если Gemini сообщает, что адрес возврата не разрешён/),
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "Скопировать адрес" }),
+  ).toBeEnabled();
+  await expect(
+    dialog.getByRole("link", { name: "Официальное руководство" }),
+  ).toHaveAttribute(
+    "href",
+    "https://support.google.com/gemini/answer/17209137",
+  );
 });
 
 test("hides disabled setup and still revokes existing grants", async ({

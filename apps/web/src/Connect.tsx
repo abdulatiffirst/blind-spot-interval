@@ -57,7 +57,7 @@ const assistants = {
     hint: "connectGeminiHint",
     requirement: "connectGeminiRequirement",
     steps: ["connectGeminiStep1", "connectGeminiStep2", "connectGeminiStep3"],
-    docs: "https://developers.google.com/connected-apps/mcp/dev-mode/usage",
+    docs: "https://support.google.com/gemini/answer/17209137",
   },
   other: {
     name: "",
@@ -198,6 +198,9 @@ function SetupDialog({
               ))}
             </ol>
             <ConnectionAddress resource={resource} />
+            {platform === "gemini" && (
+              <p>{translate("connectGeminiTroubleshooting")}</p>
+            )}
           </>
         )}
         {item.docs && (

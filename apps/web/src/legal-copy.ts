@@ -67,7 +67,7 @@ export const legalCopy = {
       ],
       [
         "Connect ChatGPT, Claude or Gemini",
-        "In Settings → Blind Spot Connect choose your assistant and open its setup instructions. In ChatGPT use the custom MCP server setup in Plugins (called Apps in some workspaces). In Claude open Customize → Connectors and add a custom connector. In Gemini on the web use Gemini Apps Developer Mode to create and test a custom app. Availability depends on your provider account, workspace and the configured connection. Use the server address shown in Settings, sign in to Blind Spot and review the requested permissions.",
+        "In Settings → Blind Spot Connect choose your assistant and open its setup instructions. In ChatGPT use the custom MCP server setup in Plugins (called Apps in some workspaces). In Claude open Customize → Connectors and add a custom connector. In Gemini on the web, go to Customize → Connectors → Custom. Availability depends on your provider account, workspace and the configured connection. Use the server address shown in Settings, sign in to Blind Spot and review the requested permissions.",
       ],
       [
         "Manage and disconnect AI applications",
@@ -151,7 +151,7 @@ export const legalCopy = {
       ],
       [
         "Подключение ChatGPT, Claude и Gemini",
-        "В настройках Blind Spot Connect выберите помощника и откройте инструкцию. В ChatGPT используйте подключение собственного MCP-сервера в разделе Plugins (в некоторых рабочих пространствах — Apps). В Claude откройте Customize → Connectors и добавьте свой коннектор. В веб-версии Gemini используйте Gemini Apps Developer Mode для создания и проверки приложения. Доступность зависит от аккаунта, рабочего пространства и настроек подключения. Используйте адрес из настроек Blind Spot, войдите и проверьте запрошенные разрешения.",
+        "В настройках Blind Spot Connect выберите помощника и откройте инструкцию. В ChatGPT используйте подключение собственного MCP-сервера в разделе Plugins (в некоторых рабочих пространствах — Apps). В Claude откройте Customize → Connectors и добавьте свой коннектор. В веб-версии Gemini откройте Customize → Connectors → Custom. Доступность зависит от аккаунта, рабочего пространства и настроек подключения. Используйте адрес из настроек Blind Spot, войдите и проверьте запрошенные разрешения.",
       ],
       [
         "Управление доступом ИИ-приложений",
