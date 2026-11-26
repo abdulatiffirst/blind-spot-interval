@@ -99,6 +99,25 @@ async function availability(uid: string, at: Date, duration: number) {
     );
   }
 }
+async function previewAction(
+  uid: string,
+  name: WriteName,
+  input: Input,
+): Promise<RecordData> {
+  if (name === "create_topic") return {};
+  if (name === "complete_review")
+    return target(uid, (input as z.infer<typeof completeInput>).reviewId);
+  const { scheduledAt, reviewId } = input as z.infer<typeof rescheduleInput>;
+  const at = new Date(scheduledAt);
+  if (at <= new Date()) fail(400, "Choose a future time");
+  const { duration } = await target(uid, reviewId);
+  return domain.previewManual(
+    uid,
+    reviewId,
+    at,
+    await availability(uid, at, duration),
+  );
+}
 function output(row: RecordData) {
   return {
     action: row.name,
@@ -176,26 +195,10 @@ export async function requestMutation(
     return row;
   }
   if (!existing || existing.expiresAt.toMillis() <= Date.now()) {
-    let preview: RecordData = {};
-    if (name === "complete_review")
-      preview = await target(
-        p.uid,
-        (input as z.infer<typeof completeInput>).reviewId,
-      );
-    if (name === "reschedule_review") {
-      const { reviewId, scheduledAt } = input as z.infer<
-        typeof rescheduleInput
-      >;
-      const at = new Date(scheduledAt);
-      if (at <= new Date()) fail(400, "Choose a future time");
-      const { duration } = await target(p.uid, reviewId);
-      preview = await domain.previewManual(
-        p.uid,
-        reviewId,
-        at,
-        await availability(p.uid, at, duration),
-      );
-    }
+    const prepared = await previewAction(p.uid, name, input).then(
+      (preview) => ({ preview }),
+      (error: unknown) => ({ error }),
+    );
     existing = await db.runTransaction(async (tx) => {
       await requireActiveAccount(p.uid, tx);
       const [owner, action] = await Promise.all([
@@ -210,6 +213,10 @@ export async function requestMutation(
       if (latest && latest.expiresAt.toMillis() > Date.now())
         return check(latest);
 
+      // A same-key call may have committed while we checked the review.
+      // Its receipt takes precedence over a now-stale eligibility check.
+      if ("error" in prepared) throw prepared.error;
+      const { preview } = prepared;
       const row = {
         ...p,
         application: grant.name,

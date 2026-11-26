@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { signInAsEmulatedGoogleUser } from "./connect-fixtures.ts";
 import { DateTime } from "luxon";
+import * as store from "../../functions/src/store.ts";
 import { auth, db, deletionRef } from "../../functions/src/store.ts";
 import { createTopic, digest } from "../../functions/src/domain.ts";
 import { defaults } from "../../packages/shared/src/index.ts";
@@ -19,7 +20,10 @@ import { once } from "node:events";
 import { createApp } from "../../functions/src/http.ts";
 import { processDeletion } from "../../functions/src/account-deletion.ts";
 import { CalendarSync } from "../../functions/src/calendar.ts";
-import { requestMutation } from "../../functions/src/connect/writes.ts";
+import {
+  completeInput,
+  requestMutation,
+} from "../../functions/src/connect/writes.ts";
 import { encrypt } from "../../apps/api/src/security.ts";
 
 const origin = process.env.BLIND_SPOT_CONNECT_ORIGIN ?? "http://localhost:5000";
@@ -696,7 +700,8 @@ describe.skipIf(process.env.BLIND_SPOT_CONNECT_ENABLED !== "true")(
         expect(response.status, await response.clone().text()).toBe(201);
         const client = await response.json();
         expect(client.redirect_uris).toEqual(redirects);
-        const { code, verifier } = await consent(scopes, alice, undefined, {
+        const user = await signInAsEmulatedGoogleUser(origin);
+        const { code, verifier } = await consent(scopes, user, undefined, {
           client_id: client.client_id,
           redirect_uri: redirects[0],
         });
@@ -725,7 +730,9 @@ describe.skipIf(process.env.BLIND_SPOT_CONNECT_ENABLED !== "true")(
         expect(linked.refresh_token).toBe(tokens.refresh_token);
         expect((await form("/token", refresh)).status).toBe(200);
 
+        let requestId = 0;
         const rpc = async (method: string, params: object) => {
+          const id = ++requestId;
           const result = await mcp(linked.access_token, {
             method: "POST",
             headers: {
@@ -733,17 +740,25 @@ describe.skipIf(process.env.BLIND_SPOT_CONNECT_ENABLED !== "true")(
               accept: "application/json, text/event-stream",
               "mcp-protocol-version": "2025-11-25",
             },
-            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+            body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
           });
           expect(result.status, await result.clone().text()).toBe(200);
           if (
-            result.headers.get("content-type")?.includes("text/event-stream")
-          ) {
-            const data = (await result.text()).match(/^data: (.+)$/m)?.[1];
-            expect(data).toBeDefined();
-            return JSON.parse(data!).result;
-          }
-          return (await result.json()).result;
+            method === "tools/call" &&
+            "name" in params &&
+            params.name === "create_topic"
+          )
+            expect(result.headers.get("x-request-id")).toMatch(
+              /^[0-9a-f-]{36}$/,
+            );
+          const type = result.headers.get("content-type");
+          expect(type).toMatch(/^(application\/json|text\/event-stream)\b/);
+          const envelope = type!.startsWith("text/event-stream")
+            ? JSON.parse((await result.text()).match(/^data: (.+)$/m)![1])
+            : await result.json();
+          expect(envelope).toMatchObject({ jsonrpc: "2.0", id });
+          expect(envelope.error).toBeUndefined();
+          return envelope.result;
         };
         expect(
           await rpc("initialize", {
@@ -758,6 +773,71 @@ describe.skipIf(process.env.BLIND_SPOT_CONNECT_ENABLED !== "true")(
         ).toMatchObject({
           structuredContent: { items: expect.any(Array) },
         });
+
+        const { applications } = await api("/connect/applications", user).then(
+          (r) => r.json(),
+        );
+        expect(
+          (
+            await api("/connect/applications/approval", user, {
+              clientId: client.client_id,
+              grantId: applications[0].grantId,
+              approvalMode: "allow",
+            })
+          ).status,
+        ).toBe(200);
+        const args = {
+          title: "MCP Gemini Test",
+          tags: ["Mathematics"],
+          initialKnowledge: 3,
+          importance: 3,
+          idempotencyKey: "mcp-gemini-test-20261127-01",
+        };
+        const create = (input: object) =>
+          rpc("tools/call", { name: "create_topic", arguments: input });
+        for (const invalid of [
+          { title: args.title },
+          { ...args, idempotencyKey: "short" },
+          { ...args, initialKnowledge: 0 },
+        ]) {
+          expect((await create(invalid)).isError).toBe(true);
+        }
+        const topics = db
+          .collection("users")
+          .doc(user.uid)
+          .collection("topics");
+        expect((await topics.get()).empty).toBe(true);
+        const created = await create(args);
+        expect(created.isError).not.toBe(true);
+        const receipt = created.structuredContent;
+        expect(receipt).toMatchObject({
+          state: "applied",
+          result: { title: args.title, topicId: expect.any(String) },
+        });
+        expect(JSON.parse(created.content[0].text)).toEqual(receipt);
+        expect((await create(args)).structuredContent).toEqual(receipt);
+        expect((await topics.get()).docs.map((d) => d.id)).toEqual([
+          receipt.result.topicId,
+        ]);
+        expect(
+          (await topics.doc(receipt.result.topicId).get()).data(),
+        ).toMatchObject({
+          title: args.title,
+          tags: args.tags,
+          initial_knowledge: 3,
+          importance: 3,
+          pendingScheduleId: receipt.result.firstReview.id,
+        });
+
+        const reviews = await db
+          .collection("users")
+          .doc(user.uid)
+          .collection("reviewSchedules")
+          .where("topic_id", "==", receipt.result.topicId)
+          .get();
+        expect(reviews.docs.map((d) => d.id)).toEqual([
+          receipt.result.firstReview.id,
+        ]);
 
         await registry.update({ redirect_uris: redirects.slice(1) });
         expect((await form("/token", refresh)).status).toBe(400);
@@ -956,6 +1036,20 @@ describe.skipIf(process.env.BLIND_SPOT_CONNECT_ENABLED !== "true")(
         expect(
           (await run(client, "preview_review", { duration: 20 })).duration,
         ).toBe(20);
+        for (const [name, args] of [
+          ["complete_review", { reviewId: "unknown", rating: 3 }],
+          [
+            "reschedule_review",
+            { reviewId: "unknown", scheduledAt: "2099-01-01T12:00:00Z" },
+          ],
+        ] as const) {
+          await expect(
+            client.callTool({
+              name,
+              arguments: { ...args, idempotencyKey: key() },
+            }),
+          ).rejects.toThrow();
+        }
         const rejectedVersion = await mcp(tokens.access_token, {
           method: "POST",
           headers: {
@@ -969,10 +1063,12 @@ describe.skipIf(process.env.BLIND_SPOT_CONNECT_ENABLED !== "true")(
         const request = await mcp(tokens.access_token);
         expect(request.status).toBe(405);
         expect(request.headers.has("mcp-session-id")).toBe(false);
-        await db
+        const access = db
           .collection("mcpEphemeral")
-          .doc(digest("access:" + tokens.access_token))
-          .update({ expiresAt: new Date(0) });
+          .doc(digest("access:" + tokens.access_token));
+        await access.update({ resource: "https://other.invalid/api/mcp" });
+        expect((await mcp(tokens.access_token)).status).toBe(401);
+        await access.update({ resource, expiresAt: new Date(0) });
         expect((await mcp(tokens.access_token)).status).toBe(401);
       } finally {
         await client.close();
@@ -1278,12 +1374,17 @@ describe.skipIf(process.env.BLIND_SPOT_CONNECT_ENABLED !== "true")(
           scheduledAt: at,
           idempotencyKey: key(),
         };
-        expect(await run(client, "reschedule_review", move)).toMatchObject({
+        const moved = await run(client, "reschedule_review", move);
+        expect(moved).toMatchObject({
           state: "applied",
           result: {
             review: { id: first.id, scheduledAt: new Date(at).toISOString() },
           },
         });
+        const owner = db.collection("users").doc(user.uid);
+        const revision = (await owner.get()).get("revision");
+        expect(await run(client, "reschedule_review", move)).toEqual(moved);
+        expect((await owner.get()).get("revision")).toBe(revision);
         const occupied = await run(client, "create_topic", {
           title: "Another pending review",
           idempotencyKey: key(),
@@ -1444,6 +1545,94 @@ describe.skipIf(process.env.BLIND_SPOT_CONNECT_ENABLED !== "true")(
         await client.close();
       }
     }, 60_000);
+
+    it("returns the committed receipt when a same-key completion wins during target lookup", async () => {
+      const user = await signInAsEmulatedGoogleUser(origin);
+      const tokens = await connect(scopes, user);
+      const {
+        applications: [grant],
+      } = await api("/connect/applications", user).then((r) => r.json());
+      expect(
+        (
+          await api("/connect/applications/approval", user, {
+            clientId,
+            grantId: grant.grantId,
+            approvalMode: "allow",
+          })
+        ).status,
+      ).toBe(200);
+      const client = await sdk(tokens.access_token);
+      try {
+        const created = await run(client, "create_topic", {
+          title: "Completion retry",
+          idempotencyKey: key(),
+        });
+        const args = {
+          reviewId: created.result.firstReview.id,
+          rating: 3,
+          idempotencyKey: key(),
+        };
+        const principal = {
+          uid: user.uid,
+          clientId,
+          grantId: grant.grantId,
+          scopes: grant.scopes,
+        };
+        // Let the HTTP call commit after the competing invocation misses the action
+        // record, but before it observes the target review's status.
+        let committed;
+        const get = store.get;
+        const lookup = vi
+          .spyOn(store, "get")
+          .mockImplementationOnce(async (...params) => {
+            committed = await run(client, "complete_review", args);
+            return get(...params);
+          });
+        try {
+          const retry = await requestMutation(
+            principal,
+            "complete_review",
+            completeInput.parse(args),
+            origin,
+          );
+          expect(committed).toMatchObject({ state: "applied" });
+          expect(retry).toEqual(committed);
+        } finally {
+          lookup.mockRestore();
+        }
+        expect(
+          (
+            await db
+              .collection("users")
+              .doc(user.uid)
+              .collection("reviewHistory")
+              .get()
+          ).size,
+        ).toBe(1);
+        for (const [name, extra] of [
+          ["complete_review", { rating: 3 }],
+          ["reschedule_review", { scheduledAt: "2099-01-01T12:00:00Z" }],
+        ] as const) {
+          const idempotencyKey = key();
+          const missing = await client.callTool({
+            name,
+            arguments: { ...extra, reviewId: "missing", idempotencyKey },
+          });
+          expect(missing).toMatchObject({
+            isError: true,
+            content: [{ type: "text", text: "Review not found" }],
+          });
+          const actionId = digest(
+            JSON.stringify([user.uid, clientId, name, idempotencyKey]),
+          );
+          expect(
+            (await db.collection("mcpActions").doc(actionId).get()).exists,
+          ).toBe(false);
+        }
+      } finally {
+        await client.close();
+      }
+    });
 
     it.each([
       ["account deletion", 410],
