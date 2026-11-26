@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useTheme } from "./useTheme";
+import { useEffect, type ReactNode } from "react";
 import { Moon, Sun } from "lucide-react";
 import { Logo } from "./components";
 import { LanguageSwitch } from "./i18n/LanguageSwitch";
@@ -17,7 +18,13 @@ export const legalPath = (pathname: string) => {
   return Object.hasOwn(paths, path) ? (path as keyof typeof paths) : null;
 };
 
-export function LegalLinks({ current }: { current?: keyof typeof paths }) {
+export function LegalLinks({
+  current,
+  children,
+}: {
+  current?: keyof typeof paths;
+  children?: ReactNode;
+}) {
   useLanguage();
   return (
     <nav className="legal-links" aria-label={translate("legalNavigation")}>
@@ -30,6 +37,7 @@ export function LegalLinks({ current }: { current?: keyof typeof paths }) {
           {translate(label)}
         </a>
       ))}
+      {children}
     </nav>
   );
 }
@@ -38,7 +46,7 @@ const email = "abdulatifabdunazirov@gmail.com";
 
 export function LegalPage({ path }: { path: keyof typeof paths }) {
   const language = useLanguage();
-  const [dark, setDark] = useState(localStorage.getItem("theme") === "dark");
+  const { dark, toggleTheme } = useTheme();
   const title = translate(paths[path]);
   useEffect(() => {
     document.documentElement.lang = language;
@@ -47,10 +55,6 @@ export function LegalPage({ path }: { path: keyof typeof paths }) {
       .querySelector('meta[name="description"]')
       ?.setAttribute("content", document.title);
   }, [language, title]);
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", dark);
-    localStorage.setItem("theme", dark ? "dark" : "light");
-  }, [dark]);
   return (
     <div className="landing legal-page">
       <header>
@@ -61,8 +65,9 @@ export function LegalPage({ path }: { path: keyof typeof paths }) {
           <LanguageSwitch />
           <Button
             className="icon-button"
-            aria-label={translate("theme")}
-            onClick={() => setDark(!dark)}
+            aria-label={translate("darkTheme")}
+            aria-pressed={dark}
+            onClick={toggleTheme}
           >
             {dark ? <Sun size={19} /> : <Moon size={19} />}
           </Button>

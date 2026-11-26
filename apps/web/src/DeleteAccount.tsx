@@ -41,6 +41,7 @@ export function DeleteAccount({
   return (
     <>
       <Button
+        className="destructive-action"
         onClick={() => {
           setError(undefined);
           setOpen(true);

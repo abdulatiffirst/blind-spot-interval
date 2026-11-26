@@ -64,6 +64,12 @@ async function capture(
   else await page.screenshot({ ...options, fullPage: true });
 }
 
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    if (!localStorage.getItem("theme")) localStorage.setItem("theme", "light");
+  });
+});
+
 test("approves read and write consents and a topic, then revokes the app in Russian", async ({
   page,
 }, info) => {
@@ -157,7 +163,7 @@ test("approves read and write consents and a topic, then revokes the app in Russ
     await page.goto(staged.confirmationUrl);
     await expect(page.getByText("Browser logarithms")).toBeVisible();
     await expect(page.getByText("A worked example")).toBeVisible();
-    await page.getByRole("button", { name: "Toggle theme" }).click();
+    await page.getByRole("button", { name: "Dark mode" }).click();
     await expect(page.locator("html")).toHaveClass(/dark/);
     await capture(page, info, "confirmation-dark-en");
     await page.getByRole("button", { name: "Русский" }).click();
@@ -627,7 +633,7 @@ test("shows provider states and manual setup with a loading skeleton, retry and 
   await capture(page, info, "connected-ru", success);
   await page.keyboard.press("Escape");
 
-  await page.getByRole("button", { name: "Сменить тему" }).click();
+  await page.getByRole("button", { name: "Тёмная тема" }).click();
   await expect(page.locator("html")).toHaveClass(/dark/);
   const russian = page.getByRole("region", {
     name: "Подключённые ИИ-приложения",
@@ -748,7 +754,7 @@ test("hides disabled setup and still revokes existing grants", async ({
       0,
     );
     await capture(page, info, "settings-disabled-en", region);
-    await page.getByRole("button", { name: "Toggle theme" }).click();
+    await page.getByRole("button", { name: "Dark mode" }).click();
     await page.getByRole("button", { name: "Русский" }).click();
     const russian = page.getByRole("region", {
       name: "Подключённые ИИ-приложения",

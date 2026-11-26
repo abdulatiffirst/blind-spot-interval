@@ -35,7 +35,10 @@ test("create, edit, review, archive and restore a real topic", async ({
   await expect(
     page.getByRole("heading", { name: /What did you learn/ }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Calendar", exact: true }).click();
+  await page
+    .locator("aside nav")
+    .getByRole("link", { name: "Calendar", exact: true })
+    .click();
   await page
     .getByRole("button", { name: "Add topic", exact: true })
     .first()
@@ -81,7 +84,10 @@ test("create, edit, review, archive and restore a real topic", async ({
     .fill("https://example.com");
   await dialog.getByRole("button", { name: "Add topic", exact: true }).click();
   await expect(dialog).not.toBeVisible();
-  await page.getByRole("button", { name: "Topics", exact: true }).click();
+  await page
+    .locator("aside nav")
+    .getByRole("link", { name: "Topics", exact: true })
+    .click();
   await page.getByRole("button", { name: /Logarithms/ }).click();
   await page.getByRole("button", { name: "Edit topic", exact: true }).click();
   await dialog.getByRole("button", { name: "Remove Math" }).click();
@@ -117,7 +123,10 @@ test("create, edit, review, archive and restore a real topic", async ({
 });
 test("settings, calendar and keyboard dialog interaction", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .locator("aside nav")
+    .getByRole("link", { name: "Settings", exact: true })
+    .click();
   await page.getByLabel("Timezone", { exact: true }).click();
   await page
     .getByRole("combobox", { name: "Search timezones" })
@@ -128,7 +137,10 @@ test("settings, calendar and keyboard dialog interaction", async ({ page }) => {
   const [saved] =
     await sql`SELECT settings FROM user_preferences WHERE user_id=${user}`;
   expect(saved.settings.timezone).toBe("Asia/Tashkent");
-  await page.getByRole("button", { name: "Calendar", exact: true }).click();
+  await page
+    .locator("aside nav")
+    .getByRole("link", { name: "Calendar", exact: true })
+    .click();
   await expect(page.getByText("Your internal calendar is ready")).toBeVisible();
   await page.getByRole("button", { name: "Add topic", exact: true }).click();
   await expect(page.getByRole("textbox", { name: /Topic name/ })).toBeFocused();

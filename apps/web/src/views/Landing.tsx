@@ -1,3 +1,4 @@
+import { FeedbackLink } from "../FeedbackLink";
 import { LegalLinks } from "../legal";
 import { translate } from "../i18n";
 import { useEffect, useRef, useState } from "react";
@@ -56,10 +57,12 @@ function Tagline() {
 }
 
 export function Landing({
+  connectGuide,
   theme,
   cta,
   feedback,
 }: {
+  connectGuide: boolean;
   theme: ReactNode;
   cta: ReactNode;
   feedback: ReactNode;
@@ -132,6 +135,36 @@ export function Landing({
             </li>
           </ol>
         </section>
+        <section
+          className="landing-section assistant-section"
+          aria-labelledby="assistant-heading"
+        >
+          <h2 id="assistant-heading">{translate("assistantHeading")}</h2>
+          <p>{translate("assistantIntro")}</p>
+          {/* Unmodified monochrome brand marks from Simple Icons v13.21.0 (CC0). */}
+          <ul className="provider-logos">
+            {Object.entries({
+              openai: "ChatGPT",
+              claude: "Claude",
+              googlegemini: "Gemini",
+            }).map(([asset, name]) => (
+              <li key={asset}>
+                <img
+                  src={"/providers/" + asset + ".svg"}
+                  width="24"
+                  height="24"
+                  alt={name}
+                />
+                <span aria-hidden="true">{name}</span>
+              </li>
+            ))}
+          </ul>
+          <blockquote>{translate("assistantExample")}</blockquote>
+          <p>{translate("assistantPermissions")}</p>
+          {connectGuide && (
+            <a href="/?section=Settings">{translate("assistantGuide")}</a>
+          )}
+        </section>
         <section className="landing-section">
           <h2>{translate("benefits")}</h2>
           <ul>
@@ -151,9 +184,11 @@ export function Landing({
         </section>
         <div className="landing-section">{cta}</div>
       </main>
-      <footer>
-        <LegalLinks />
-        <span>Blind Spot Interval</span>
+      <footer className="landing-footer">
+        <strong>Blind Spot Interval</strong>
+        <LegalLinks>
+          <FeedbackLink />
+        </LegalLinks>
 
         <address>
           <a href="https://t.me/aabdunazirov">Telegram: @aabdunazirov</a>

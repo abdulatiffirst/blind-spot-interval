@@ -76,10 +76,11 @@ test("public legal pages work directly and persist language and theme", async ({
     page.getByRole("heading", { name: "Privacy Policy" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Русский" }).click();
+  await expect(page.locator("html")).toHaveClass(/dark/);
   await page.locator("header .icon-button").click();
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("lang", "ru");
-  await expect(page.locator("html")).toHaveClass("dark");
+  await expect(page.locator("html")).not.toHaveClass(/dark/);
   await expect(
     page.getByRole("heading", { name: "Политика конфиденциальности" }),
   ).toBeVisible();
@@ -102,4 +103,57 @@ test("public legal pages work directly and persist language and theme", async ({
   await expect(
     page.getByRole("heading", { name: "Support Center" }),
   ).toBeVisible();
+});
+
+test("shows the saved theme before React loads", async ({ page }) => {
+  await page.route("**/src/main.tsx", (route) => route.abort());
+  await page.goto("/");
+  await expect(page.locator("html")).toHaveClass(/dark/);
+  await page.evaluate(() => localStorage.setItem("theme", "light"));
+  await page.reload();
+  await expect(page.locator("html")).not.toHaveClass(/dark/);
+});
+
+test("localizes assistant information and footer feedback", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const section = page.getByRole("region", {
+    name: "Connect your AI assistant",
+  });
+  for (const name of ["ChatGPT", "Claude", "Gemini"]) {
+    const image = section.getByRole("img", { name });
+    await expect(image).toBeVisible();
+    expect(
+      await image.evaluate(async (element) => {
+        const logo = element as HTMLImageElement;
+        await logo.decode();
+        return logo.naturalWidth;
+      }),
+    ).toBeGreaterThan(0);
+  }
+  await expect(section.getByRole("link")).toHaveAttribute(
+    "href",
+    "/?section=Settings",
+  );
+  const feedback = page
+    .locator("footer")
+    .getByRole("link", { name: "Feedback" });
+  await expect(feedback).toHaveAttribute(
+    "href",
+    "https://docs.google.com/forms/d/e/1FAIpQLSfufB9hksgREvOqXahEO6Ufs5OTzNDDgwQYpagCkeOqAzwM_Q/viewform?usp=dialog",
+  );
+  await expect(feedback).toHaveAttribute("target", "_blank");
+  await expect(feedback).toHaveAttribute("rel", "noopener noreferrer");
+  await page.getByRole("button", { name: "Русский" }).click();
+  await expect(
+    page.getByRole("region", { name: "Подключите своего ИИ-помощника" }),
+  ).toContainText("Логарифмы");
+  await expect(
+    page.getByRole("link", { name: "Обратная связь" }),
+  ).toHaveAttribute(
+    "href",
+    "https://docs.google.com/forms/d/e/1FAIpQLScKvWlsFzutGVLaXLpzFrDYzdzsxy3Q47xGChvaFZV2Drg4Lw/viewform?usp=dialog",
+  );
+  await expect(page.locator("header a[href*='forms']")).toHaveCount(0);
 });

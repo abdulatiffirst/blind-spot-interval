@@ -439,5 +439,12 @@
   "connectReplacementNote": "Only the selected connection is revoked, and only after the new connection finishes authorization. The new connection starts with the permissions selected above and always asks for action approval.",
   "connectReplace": "Replace a connection",
   "connectReplaceTitle": "Replace a connection for {platform}",
-  "connectReplaceSetup": "Start authorization in your assistant, then choose the previous connection on the Blind Spot consent screen."
+  "connectReplaceSetup": "Start authorization in your assistant, then choose the previous connection on the Blind Spot consent screen.",
+  "feedbackLink": "Feedback",
+  "darkTheme": "Dark mode",
+  "assistantHeading": "Connect your AI assistant",
+  "assistantIntro": "Manage topics and reviews with a compatible assistant through the Model Context Protocol (MCP). Setup options vary by provider and account.",
+  "assistantExample": "“Add Logarithms to my Blind Spot topics and set its importance to 5.”",
+  "assistantPermissions": "Choose what your assistant can access. Review each change, or allow changes within the permissions you grant. Scheduling warnings still need your approval.",
+  "assistantGuide": "Sign in to see the connection guide in Settings"
 }
