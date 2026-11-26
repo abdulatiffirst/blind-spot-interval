@@ -1163,7 +1163,9 @@ function App() {
                     /5
                     {h.corrected_at ? translate("corrected") : ""}
                   </span>
-                  {index === 0 &&
+                  {(usesFirebase
+                    ? h.schedule_id === detail.memory?.latestReviewId
+                    : index === 0) &&
                     detail.status === "active" &&
                     detail.schedule?.mode !== "manual" && (
                       <Button

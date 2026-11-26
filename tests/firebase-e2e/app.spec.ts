@@ -262,6 +262,7 @@ test("Google credential → first topic by name → first review date → review
   await page.getByRole("button", { name: "Topics", exact: true }).click();
   const open = page.getByRole("button", { name: /Logarithms/ });
   await open.click();
+  await expect(page.locator(".history-row")).toHaveCount(1);
   await page.getByRole("button", { name: "Reschedule", exact: true }).click();
   await page.getByRole("button", { name: "Return to automatic" }).click();
   await expect(page.getByRole("dialog")).not.toBeVisible();
@@ -269,7 +270,24 @@ test("Google credential → first topic by name → first review date → review
   await page.getByRole("button", { name: /Review now/ }).click();
   await page.getByRole("button", { name: /1 Forgot completely/ }).click();
   await expect(page.getByRole("status")).toContainText("Next review");
+  let holdHistory!: (route: Route) => void;
+  const historyRefresh = new Promise<Route>((resolve) => {
+    holdHistory = resolve;
+  });
+  await page.route((url) => url.pathname.endsWith("/history"), holdHistory, {
+    times: 1,
+  });
   await open.click();
+  const historyRoute = await historyRefresh;
+  try {
+    await expect(page.locator(".history-row")).toHaveCount(1);
+    await expect(
+      page.getByRole("button", { name: "Correct rating" }),
+    ).toHaveCount(0);
+  } finally {
+    await historyRoute.continue();
+  }
+  await expect(page.locator(".history-row")).toHaveCount(2);
   await expect(
     page.getByRole("button", { name: "Correct rating" }),
   ).toHaveCount(1);
