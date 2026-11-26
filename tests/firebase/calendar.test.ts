@@ -1,6 +1,10 @@
+import {
+  processDeletion,
+  requestDeletion,
+} from "../../functions/src/account-deletion.ts";
 import { beforeAll, afterAll, it, expect } from "vitest";
 import { Timestamp } from "firebase-admin/firestore";
-import { db, collection } from "../../functions/src/store.ts";
+import { db, collection, deletionRef } from "../../functions/src/store.ts";
 import {
   complete,
   preview,
@@ -544,5 +548,64 @@ it("publishes a new event after an unscheduled review gets another slot", async 
   } finally {
     await connection.delete();
     await db.recursiveDelete(db.collection("users").doc(owner));
+  }
+});
+
+it("hands an in-flight Calendar grant to account deletion without scheduling sync", async () => {
+  const member = "calendar-delete-" + crypto.randomUUID();
+  const job = deletionRef(member);
+  const connection = db.collection("calendarConnections").doc(member);
+  const root = db.collection("users").doc(member);
+  let markAcquired!: () => void;
+  let releaseExchange!: () => void;
+  const acquired = new Promise<void>((resolve) => {
+    markAcquired = resolve;
+  });
+  const exchangeMayFinish = new Promise<void>((resolve) => {
+    releaseExchange = resolve;
+  });
+  await ensureUser(member, {});
+  const { state } = await authorize(member);
+  const finishCallback = finish("synthetic-code", state, state, async () => {
+    markAcquired();
+    await exchangeMayFinish;
+    return Response.json({
+      access_token: "access-test-only",
+      refresh_token: "late-test-token",
+      scope: scopes.join(" "),
+      expires_in: 3600,
+    });
+  }).catch((error) => error);
+  try {
+    await Promise.race([
+      acquired,
+      finishCallback.then((error) => {
+        throw error;
+      }),
+    ]);
+    await requestDeletion(member, Math.floor(Date.now() / 1000));
+    expect((await job.get()).get("nextAttemptAt")).toBeGreaterThan(Date.now());
+    releaseExchange();
+    expect(await finishCallback).toMatchObject({ statusCode: 410 });
+    expect((await connection.get()).exists).toBe(false);
+    expect((await job.collection("calendarTokens").get()).size).toBe(1);
+    await job.update({ nextAttemptAt: Date.now() });
+    const calls: string[] = [];
+    await processDeletion(job, async (url, options) => {
+      expect(String(url)).toBe("https://oauth2.googleapis.com/revoke");
+      calls.push(String(options?.body));
+      return new Response(null, { status: 204 });
+    });
+    expect(calls).toEqual(["token=late-test-token"]);
+    expect((await job.get()).data()).toEqual({ completed: true });
+    expect((await job.collection("calendarTokens").get()).empty).toBe(true);
+  } finally {
+    releaseExchange();
+    await finishCallback;
+    await Promise.all([
+      db.recursiveDelete(job),
+      db.recursiveDelete(root),
+      connection.delete(),
+    ]);
   }
 });

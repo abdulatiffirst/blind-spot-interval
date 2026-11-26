@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { getApps, initializeApp } from "firebase-admin/app";
 import {
   getFirestore,
@@ -12,6 +13,16 @@ export const db = getFirestore();
 db.settings({ ignoreUndefinedProperties: true });
 export const auth = getAuth();
 export type RecordData = DocumentData;
+export const calendarOAuthLock = (uid: string) =>
+  db.collection("calendarOAuthLocks").doc(uid);
+export const deletions = db.collection("accountDeletions");
+export const deletionRef = (uid: string) =>
+  deletions.doc(createHash("sha256").update(uid).digest("hex"));
+export async function requireActiveAccount(uid: string, tx?: Transaction) {
+  const ref = deletionRef(uid);
+  if ((await (tx ? tx.get(ref) : ref.get())).exists)
+    fail(410, "Account deletion has been requested");
+}
 export const userRef = (uid: string) => db.collection("users").doc(uid);
 export const collection = (uid: string, name: string) =>
   userRef(uid).collection(name);
@@ -81,6 +92,7 @@ export async function mutate<T>(
   guard?: MutationGuard,
 ) {
   return db.runTransaction(async (tx) => {
+    await requireActiveAccount(uid, tx);
     const rootSnap = await tx.get(userRef(uid));
     if (!rootSnap.exists) fail(401, "Account not initialized");
     const read = async (name: string, id: string) => {

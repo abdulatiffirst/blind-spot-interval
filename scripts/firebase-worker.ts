@@ -28,14 +28,14 @@ config({
 const stop = new AbortController();
 for (const signal of ["SIGINT", "SIGTERM"])
   process.on(signal, () => stop.abort());
-const { reconcile } = await import("../functions/src/jobs.ts");
+const { runScheduledMaintenance } = await import("../functions/src/jobs.ts");
 const { db } = await import("../functions/src/store.ts");
 while (!stop.signal.aborted) {
   try {
-    await reconcile();
+    await runScheduledMaintenance();
   } catch {
     console.error(
-      "Local Firebase reconciliation is waiting for the emulators or a retry.",
+      "Local Firebase maintenance is waiting for the emulators or a retry.",
     );
   }
   try {

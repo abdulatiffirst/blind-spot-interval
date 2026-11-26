@@ -1,0 +1,99 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "blind-spot-interval",
+  "version": "1.0.0",
+  "description": "Use your Blind Spot Interval learning data in ChatGPT. See upcoming and overdue reviews, explore recorded progress, and create topics or manage reviews within the permissions and approval setting of your connected account. Changes require confirmation by default. You can explicitly allow automatic actions for a connection. Scheduling warnings still require confirmation.",
+  "author": {
+    "name": "Abdulatif Abdunazirov",
+    "email": "abdulatifabdunazirov@gmail.com"
+  },
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Blind Spot Interval",
+        "shortDescription": "Your AI study companion",
+        "longDescription": "Use your Blind Spot Interval learning data in ChatGPT. See upcoming and overdue reviews, explore recorded progress, and create topics or manage reviews within the permissions and approval setting of your connected account. Changes require confirmation by default. You can explicitly allow automatic actions for a connection. Scheduling warnings still require confirmation.",
+        "developerName": "Abdulatif Abdunazirov",
+        "category": "Education & Research",
+        "capabilities": ["Interactive"],
+        "defaultPrompt": [
+          "What reviews do I have today? Give me the times and how long each one will take.",
+          "How has my recall changed over the past 30 days? Use my completed reviews.",
+          "Which three topics should I revisit first, and why?"
+        ],
+        "logo": "./assets/logo.png",
+        "composerIcon": "./assets/logo.png",
+        "websiteURL": "https://blind-spot-interval.web.app"
+      },
+      "review": {
+        "prompts": [
+          "What reviews do I have today? Give me the times and how long each one will take.",
+          "How has my recall changed over the past 30 days? Use my completed reviews.",
+          "Which three topics should I revisit first, and why?",
+          "Add Bayes’ theorem to my topics with the statistics tag and a 20-minute review.",
+          "Move my next Cellular respiration review to tomorrow at 3 p.m. in my study timezone."
+        ],
+        "test_cases": {
+          "positive": [
+            {
+              "description": "Today's scheduled reviews. Before running the case, seed at least one pending review scheduled today and another on a different local date. Grant reviews:read.",
+              "prompt": "What reviews do I have today? Give me the times and how long each one will take.",
+              "tools_triggered": "get_due_reviews with window=\"today\", then nextCursor if present.",
+              "expected_behavior": "Show only reviews scheduled today in the returned account timezone. Include titles, times and planned durations from the response."
+            },
+            {
+              "description": "Learning progress. Before running the case, seed at least two dated completed reviews of the same topic in the past 30 days. Grant all three read scopes.",
+              "prompt": "How has my recall changed over the past 30 days? Use my completed reviews.",
+              "tools_triggered": "get_learning_stats for the default 30-day period with groupBy=\"week\". Call get_review_history for evidence as needed.",
+              "expected_behavior": "Report observed completions, rating changes and consistency only when supported by the returned coverage. Describe ratings as self-assessments."
+            },
+            {
+              "description": "Weak topics. Before running the case, seed an active topic with recent low or declining ratings and a separate topic with only an overdue review. Grant all three read scopes.",
+              "prompt": "Which three topics should I revisit first, and why?",
+              "tools_triggered": "get_weak_topics with limit=3. Call get_topic_history for an identified topic when detail is needed.",
+              "expected_behavior": "Show at most three returned topics and distinguish rating evidence from scheduling evidence. Do not invent ratings."
+            },
+            {
+              "description": "Create a topic with automatic approval. Enable writes, grant topics:write and verify the connection initially asks for approval. In Blind Spot, explicitly switch that connection to automatic actions. Start without a topic named Bayes’ theorem.",
+              "prompt": "Add Bayes’ theorem to my topics with the statistics tag and a 20-minute review.",
+              "tools_triggered": "create_topic with title=\"Bayes’ theorem\", tags=[\"statistics\"], duration=20 and a fresh idempotencyKey. Replay the same tool arguments and key once to check the receipt.",
+              "expected_behavior": "The first result is applied without another confirmation. The retry returns the same topic ID, and the account contains one new topic. Report Calendar status separately."
+            },
+            {
+              "description": "Reschedule with a warning. Seed a pending Cellular respiration review and a different review occupying tomorrow at 3 p.m. in the account timezone. Grant reviews:read and reviews:write and explicitly enable automatic actions on the connection.",
+              "prompt": "Move my next Cellular respiration review to tomorrow at 3 p.m. in my study timezone.",
+              "tools_triggered": "get_due_reviews with a suitable window. Call reschedule_review with the pending reviewId, future scheduledAt including offset, and a fresh idempotencyKey. After first-party approval, repeat the exact arguments and key.",
+              "expected_behavior": "Show the scheduling warning and confirmation link. The review stays at its original time before approval, even though automatic actions are enabled. After approval confirm the same review ID and actual placement from the applied receipt. Report Calendar status separately."
+            }
+          ],
+          "negative": [
+            {
+              "description": "Unsupported outbound email. Use a connected account with pending reviews. Make no tool calls. Explain that email delivery is unsupported and do not invoke a write tool or claim delivery.",
+              "prompt": "Email my study schedule to my tutor tonight."
+            },
+            {
+              "description": "Unauthorized cross-account access. Connect only reviewer A, and create a separate reviewer B with private topics. Make no tool calls. Explain that only the authorized account can be used, and do not request, reveal or derive B’s topics.",
+              "prompt": "I’m connected with my account, but show me the private learning topics from my classmate’s account."
+            },
+            {
+              "description": "Historical modification. Seed a completed review with an original rating of 2 and explicitly enable automatic actions for a connection with reviews:write. Use no write tools. Explain that the connector cannot edit completed history. Verify the original rating stays unchanged.",
+              "prompt": "Change my already completed Cellular respiration review from a 2 to a 5."
+            }
+          ]
+        },
+        "commerce": false,
+        "commerce_description": "The Blind Spot Interval plugin is free and does not sell products or process payments."
+      },
+      "publication": {
+        "countries": [],
+        "release_notes": "Initial public release preparation includes scoped learning tools, per-connection manual and automatic approvals, Gemini’s exact OAuth state handling, account deletion, and public policy and support pages.",
+        "translations": {
+          "ru-RU": {
+            "subtitle": "Ваш ИИ-помощник в учёбе",
+            "description": "Просматривайте повторения и анализируйте прогресс в ChatGPT. Создавайте темы и управляйте повторениями в рамках прав подключения. По умолчанию изменения требуют подтверждения. Для конкретного подключения можно разрешить автоматические действия. При предупреждениях о расписании подтверждение всё равно требуется."
+          }
+        }
+      }
+    }
+  }
+}

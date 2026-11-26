@@ -17,6 +17,7 @@ import type { User } from "firebase/auth";
 import {
   connectPlatformForHost,
   connectPlatforms,
+  type ConnectApprovalMode,
   type ConnectPlatform,
 } from "../../../packages/shared/src/connect-platforms.ts";
 import { api } from "./api";
@@ -80,6 +81,8 @@ const assistants = {
 
 type Application = {
   clientId: string;
+  grantId?: string;
+  approvalMode?: ConnectApprovalMode;
   name: string;
   host: string;
   scopes: ConnectScope[];
@@ -218,6 +221,7 @@ function ApplicationCard({
   data,
   locale,
   onRevoke,
+  onApprovalChange,
   busy,
 }: {
   application: Application;
@@ -225,6 +229,7 @@ function ApplicationCard({
   locale: Language;
   busy: boolean;
   onRevoke: () => void;
+  onApprovalChange: (mode: ConnectApprovalMode) => void;
 }) {
   const { clientId, name, host, scopes, connectedAt } = application;
   const time = new Date(connectedAt);
@@ -232,6 +237,11 @@ function ApplicationCard({
     ? new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(time)
     : null;
   const access = accessLabel(application, data);
+  const approvalMode = application.approvalMode ?? "ask";
+  const canAllow =
+    data.enabled &&
+    data.writes &&
+    scopes.some((scope) => scope.endsWith(":write"));
   return (
     <article
       id={"connect-app-" + clientId}
@@ -260,6 +270,28 @@ function ApplicationCard({
           ))}
         </ul>
       </div>
+      <div className="connect-approval">
+        <label>
+          <strong>{translate("connectApprovalLabel")}</strong>
+          <select
+            value={approvalMode}
+            disabled={
+              busy ||
+              !application.grantId ||
+              (!canAllow && approvalMode === "ask")
+            }
+            onChange={(event) =>
+              onApprovalChange(event.target.value === "allow" ? "allow" : "ask")
+            }
+          >
+            <option value="ask">{translate("connectApprovalAsk")}</option>
+            <option value="allow" disabled={!canAllow}>
+              {translate("connectApprovalAllow")}
+            </option>
+          </select>
+        </label>
+        {!canAllow && <p>{translate("connectApprovalUnavailable")}</p>}
+      </div>
       <Button type="button" disabled={busy} onClick={onRevoke}>
         {translate("connectRevoke")}
       </Button>
@@ -279,6 +311,7 @@ export function ConnectSettings({
   const heading = useRef<HTMLHeadingElement>(null);
   const [platform, setPlatform] = useState<ConnectPlatform>();
   const [revokeTarget, setRevokeTarget] = useState<RevokeTarget>();
+  const [approvalTarget, setApprovalTarget] = useState<Application>();
   const [revoked, setRevoked] = useState(false);
   const queryKey = ["account", accountId, "connect-applications"];
   const settings = useQuery({
@@ -298,6 +331,45 @@ export function ConnectSettings({
         application ? { clientId: application.clientId } : {},
         { user: identity },
       ),
+  });
+  const approval = useMutation({
+    mutationFn: ({
+      application,
+      approvalMode,
+    }: {
+      application: Application;
+      approvalMode: ConnectApprovalMode;
+    }) =>
+      api(
+        "/connect/applications/approval",
+        "POST",
+        {
+          clientId: application.clientId,
+          grantId: application.grantId,
+          approvalMode,
+        },
+        { user: identity },
+      ) as Promise<{ approvalMode: ConnectApprovalMode }>,
+    onSuccess: ({ approvalMode }, { application }) => {
+      void cache.cancelQueries({ queryKey });
+      cache.setQueryData<Settings>(
+        queryKey,
+        (current) =>
+          current && {
+            ...current,
+            applications: current.applications.map((app) =>
+              app.grantId === application.grantId
+                ? { ...app, approvalMode }
+                : app,
+            ),
+          },
+      );
+      setApprovalTarget(undefined);
+      void cache.invalidateQueries({ queryKey });
+    },
+    onError: () => {
+      void cache.invalidateQueries({ queryKey });
+    },
   });
   const data = settings.data;
   const canSetUp = data?.enabled && !settings.isError && !!data.resource;
@@ -499,6 +571,16 @@ export function ConnectSettings({
               </Button>
             )}
           </div>
+          {approval.isSuccess && (
+            <ConnectNotice tone="success">
+              {translate("connectApprovalSaved")}
+            </ConnectNotice>
+          )}
+          {approval.isError && !approvalTarget && (
+            <ConnectNotice tone="error">
+              {translate("connectApprovalError")}
+            </ConnectNotice>
+          )}
           {applications.length ? (
             <div className="connect-grants">
               {applications.map((application) => (
@@ -507,7 +589,13 @@ export function ConnectSettings({
                   application={application}
                   data={data}
                   locale={locale}
-                  busy={revoke.isPending}
+                  busy={revoke.isPending || approval.isPending}
+                  onApprovalChange={(approvalMode) => {
+                    approval.reset();
+                    if (approvalMode === "allow")
+                      setApprovalTarget(application);
+                    else approval.mutate({ application, approvalMode });
+                  }}
                   onRevoke={() => {
                     revoke.reset();
                     setRevokeTarget({ application });
@@ -541,6 +629,64 @@ export function ConnectSettings({
           }
           onClose={() => setPlatform(undefined)}
         />
+      )}
+      {approvalTarget && (
+        <Dialog
+          title={translate("connectApprovalTitle", {
+            name: approvalTarget.name,
+          })}
+          description={translate("connectApprovalRisk")}
+          busy={approval.isPending}
+          onClose={() => {
+            approval.reset();
+            setApprovalTarget(undefined);
+          }}
+        >
+          <div className="connect-dialog-body">
+            <div className="connect-granted">
+              <strong>{translate("connectApprovalWrites")}</strong>
+              <ul>
+                {approvalTarget.scopes
+                  .filter((scope) => scope.endsWith(":write"))
+                  .map((scope) => (
+                    <li key={scope}>{translate(scopeLabels[scope])}</li>
+                  ))}
+              </ul>
+            </div>
+            {approval.isError && (
+              <ConnectNotice tone="error">
+                {translate("connectApprovalError")}
+              </ConnectNotice>
+            )}
+            <div className="connect-actions">
+              <Button
+                type="button"
+                disabled={approval.isPending}
+                onClick={() => {
+                  approval.reset();
+                  setApprovalTarget(undefined);
+                }}
+              >
+                {translate("cancel")}
+              </Button>
+              <Button
+                type="button"
+                className="primary"
+                disabled={approval.isPending}
+                onClick={() =>
+                  approval.mutate({
+                    application: approvalTarget,
+                    approvalMode: "allow",
+                  })
+                }
+              >
+                {translate(
+                  approval.isPending ? "connectLoad" : "connectApprovalAllow",
+                )}
+              </Button>
+            </div>
+          </div>
+        </Dialog>
       )}
       {revokeTarget && (
         <Dialog

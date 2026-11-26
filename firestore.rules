@@ -1,7 +1,10 @@
 rules_version = '2';
 service cloud.firestore {
  match /databases/{database}/documents {
-  function owner(uid) { return request.auth != null && request.auth.uid == uid; }
+  function owner(uid) {
+   return request.auth != null && request.auth.uid == uid
+    && get(/databases/$(database)/documents/users/$(uid)).data.get('deleting', false) == false;
+  }
   match /users/{uid} {
    allow read: if owner(uid);
    allow write: if false;

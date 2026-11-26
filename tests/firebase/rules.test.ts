@@ -104,3 +104,16 @@ it("keeps Connect grants, tokens, registrations and confirmations server-only", 
     await assertFails(setDoc(ref, { uid }));
   }
 });
+
+it("blocks owner reads after requesting deletion", async () => {
+  const member = uid + "-deleting";
+  const path = `users/${member}`;
+  await env.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await setDoc(doc(db, path), { deleting: true });
+    await setDoc(doc(db, path + "/topics/private"), { title: "Frozen topic" });
+  });
+  const db = env.authenticatedContext(member).firestore();
+  await assertFails(getDoc(doc(db, path)));
+  await assertFails(getDoc(doc(db, path + "/topics/private")));
+});

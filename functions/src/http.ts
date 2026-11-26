@@ -1,7 +1,8 @@
+import { requestDeletion } from "./account-deletion.ts";
 import { previewInput } from "../../packages/shared/src/index.ts";
 import express from "express";
 import { z } from "zod";
-import { auth, db, all, fail, collection } from "./store.ts";
+import { auth, db, all, fail, collection, mutate } from "./store.ts";
 import * as domain from "./domain.ts";
 import * as calendar from "./calendar.ts";
 import { mountAccount, mountPublic } from "./connect/server.ts";
@@ -143,6 +144,12 @@ export function createApp() {
         }
         if (decoded.firebase?.sign_in_provider !== "google.com")
           return res.status(403).json({ error: "Use Google Sign-In" });
+        if (req.method === "POST" && req.path === "/account/delete") {
+          z.strictObject({ confirm: z.literal(true) }).parse(req.body);
+          await requestDeletion(decoded.uid, decoded.auth_time);
+          res.status(202).json({ state: "deletion_requested" });
+          return;
+        }
         res.locals.uid = decoded.uid;
         res.locals.user = await domain.ensureUser(decoded.uid, {
           email: decoded.email,
@@ -195,9 +202,14 @@ export function createApp() {
       const { language } = z
         .object({ language: z.enum(["en", "ru"]) })
         .parse(req.body);
-      await collection(res.locals.uid, "preferences")
-        .doc("default")
-        .set({ language }, { merge: true });
+      const uid = res.locals.uid;
+      await mutate(uid, async (tx) => {
+        tx.set(
+          collection(uid, "preferences").doc("default"),
+          { language },
+          { merge: true },
+        );
+      });
       res.json({ language });
     }),
   );

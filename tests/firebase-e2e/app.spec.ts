@@ -124,7 +124,7 @@ test("loads the workspace with a Firebase token and restores it on reload", asyn
   const onboarding = page.getByRole("dialog", {
     name: "Find your learning rhythm.",
   });
-  await expect(page.getByRole("navigation")).toBeVisible();
+  await expect(page.locator("aside").getByRole("navigation")).toBeVisible();
   const saved = (await db.doc(`users/${uid}/preferences/default`).get()).data();
   expect(saved?.timezone).toBe(
     await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone),
@@ -156,7 +156,7 @@ test("loads the workspace with a Firebase token and restores it on reload", asyn
   expect((await (await restoredProfile).json()).preferences.onboarded).toBe(
     true,
   );
-  await expect(page.getByRole("navigation")).toBeVisible();
+  await expect(page.locator("aside").getByRole("navigation")).toBeVisible();
   await expect(onboarding).not.toBeVisible();
   expect(meRequests).toHaveLength(2);
 });
@@ -210,9 +210,9 @@ for (const [status, message] of [
     );
     await signIn(page);
     await expect(page.getByRole("alert")).toHaveText(message);
-    await expect(page.getByRole("navigation")).toHaveCount(0);
+    await expect(page.locator("aside").getByRole("navigation")).toHaveCount(0);
     await page.getByRole("button", { name: "Retry loading workspace" }).click();
-    await expect(page.getByRole("navigation")).toBeVisible();
+    await expect(page.locator("aside").getByRole("navigation")).toBeVisible();
   });
 }
 
@@ -262,6 +262,7 @@ test("Google credential → first topic by name → first review date → review
   await page.getByRole("button", { name: "Topics", exact: true }).click();
   const open = page.getByRole("button", { name: /Logarithms/ });
   await open.click();
+  await expect(page.locator(".history-row")).toHaveCount(1);
   await page.getByRole("button", { name: "Reschedule", exact: true }).click();
   await page.getByRole("button", { name: "Return to automatic" }).click();
   await expect(page.getByRole("dialog")).not.toBeVisible();
@@ -269,7 +270,24 @@ test("Google credential → first topic by name → first review date → review
   await page.getByRole("button", { name: /Review now/ }).click();
   await page.getByRole("button", { name: /1 Forgot completely/ }).click();
   await expect(page.getByRole("status")).toContainText("Next review");
+  let holdHistory!: (route: Route) => void;
+  const historyRefresh = new Promise<Route>((resolve) => {
+    holdHistory = resolve;
+  });
+  await page.route((url) => url.pathname.endsWith("/history"), holdHistory, {
+    times: 1,
+  });
   await open.click();
+  const historyRoute = await historyRefresh;
+  try {
+    await expect(page.locator(".history-row")).toHaveCount(1);
+    await expect(
+      page.getByRole("button", { name: "Correct rating" }),
+    ).toHaveCount(0);
+  } finally {
+    await historyRoute.continue();
+  }
+  await expect(page.locator(".history-row")).toHaveCount(2);
   await expect(
     page.getByRole("button", { name: "Correct rating" }),
   ).toHaveCount(1);
@@ -339,7 +357,7 @@ test("edit, archive, restore, keyboard dismissal and Firebase sign-out", async (
   await expect(login).toBeVisible();
   await page.reload();
   await expect(login).toBeVisible();
-  await expect(page.getByRole("navigation")).toHaveCount(0);
+  await expect(page.locator("aside").getByRole("navigation")).toHaveCount(0);
   await signIn(page, account);
   await page.getByRole("button", { name: "Topics", exact: true }).click();
   await expect(
@@ -475,7 +493,7 @@ test("Russian account preference, pending archived filter, empty state and cance
   page,
 }) => {
   await signIn(page);
-  await expect(page.getByRole("navigation")).toBeVisible();
+  await expect(page.locator("aside").getByRole("navigation")).toBeVisible();
   const saved = page.waitForResponse(
     (response) =>
       response.url().endsWith("/preferences/language") &&
@@ -517,4 +535,31 @@ test("Russian account preference, pending archived filter, empty state and cance
   await dialog.getByRole("button", { name: "Отмена" }).click();
   await expect(dialog).toHaveCount(0);
   expect((await db.collection(`users/${uid}/topics`).get()).empty).toBe(true);
+});
+
+test("account settings links to public policies and requires deletion confirmation", async ({
+  page,
+}) => {
+  await signIn(page);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(
+    page.getByRole("link", { name: "Privacy Policy" }),
+  ).toHaveAttribute("href", "/privacy");
+  let deleteRequests = 0;
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/v1/account/delete")
+      deleteRequests++;
+  });
+  await page
+    .getByRole("button", { name: "Delete account", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "Delete account" });
+  await expect(dialog).toContainText("review history");
+  await expect(dialog).toContainText("Calendar events may remain");
+  await expect(
+    dialog.getByRole("button", { name: "Confirm deletion with Google" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  expect(deleteRequests).toBe(0);
 });

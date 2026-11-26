@@ -1,3 +1,4 @@
+import { processDeletions } from "./account-deletion.ts";
 import { randomUUID } from "node:crypto";
 import { db, type RecordData } from "./store.ts";
 import { CalendarSync } from "./calendar.ts";
@@ -198,4 +199,17 @@ export async function reconcile() {
       await processJob(job.id);
     }),
   ]);
+}
+
+export async function runScheduledMaintenance() {
+  const [calendar, deletion] = await Promise.allSettled([
+    reconcile(),
+    processDeletions(),
+  ]);
+  const failed = [
+    ...(calendar.status === "rejected" ? ["Calendar reconciliation"] : []),
+    ...(deletion.status === "rejected" ? ["account deletion"] : []),
+  ];
+  if (failed.length)
+    throw new Error("Scheduled maintenance failed for " + failed.join(" and "));
 }

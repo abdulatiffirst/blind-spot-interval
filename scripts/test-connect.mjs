@@ -16,6 +16,7 @@ const env = {
   ]),
   BLIND_SPOT_CONNECT_REGISTRATION_REDIRECTS: JSON.stringify([
     "http://127.0.0.1:6274/oauth/callback",
+    "https://claude.ai/api/mcp/auth_callback",
   ]),
   APP_ORIGIN: "http://localhost:5000",
   VITE_USE_FIREBASE_EMULATORS: "true",

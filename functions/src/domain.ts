@@ -9,6 +9,7 @@ import { DateTime } from "luxon";
 import {
   db,
   userRef,
+  requireActiveAccount,
   collection,
   mutate,
   get,
@@ -48,12 +49,14 @@ export async function ensureUser(
   profile: { email?: string; name?: string },
 ) {
   const ref = userRef(uid);
+  await requireActiveAccount(uid);
   const current = (await ref.get()).data();
   const changed = (user: RecordData) =>
     (profile.email && profile.email !== user.email) ||
     (profile.name && profile.name !== user.display_name);
   if (current && !changed(current)) return current;
   return db.runTransaction(async (tx) => {
+    await requireActiveAccount(uid, tx);
     const existing = (await tx.get(ref)).data();
     if (existing) {
       if (!changed(existing)) return existing;

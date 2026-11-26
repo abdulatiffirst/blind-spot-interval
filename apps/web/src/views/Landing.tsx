@@ -1,3 +1,4 @@
+import { LegalLinks } from "../legal";
 import { translate } from "../i18n";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
@@ -151,6 +152,7 @@ export function Landing({
         <div className="landing-section">{cta}</div>
       </main>
       <footer>
+        <LegalLinks />
         <span>Blind Spot Interval</span>
 
         <address>

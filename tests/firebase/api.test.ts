@@ -1,5 +1,11 @@
+import {
+  processDeletion,
+  requestDeletion,
+} from "../../functions/src/account-deletion.ts";
+import { reconcileCalendar } from "../../functions/src/index.ts";
+import { encrypt } from "../../apps/api/src/security.ts";
 import { beforeAll, afterAll, describe, it, expect } from "vitest";
-import { db, auth } from "../../functions/src/store.ts";
+import { db, auth, deletionRef } from "../../functions/src/store.ts";
 import { defaults } from "../../packages/shared/src/index.ts";
 const base =
   "http://127.0.0.1:5001/demo-blind-spot-interval/europe-west1/api/api/v1";
@@ -580,5 +586,164 @@ it("pages Firebase topics and history without losing ties or matching substrings
   } finally {
     await db.recursiveDelete(db.collection("users").doc(user.uid));
     await auth.deleteUser(user.uid);
+  }
+});
+
+it("blocks writes immediately and retries account deletion without deleting other users", async () => {
+  const user = await googleUser();
+  const other = users[1];
+  const job = deletionRef(user.uid);
+  const now = Date.now();
+  const root = db.doc("users/" + user.uid);
+  const nested = root
+    .collection("topics")
+    .doc("demo")
+    .collection("materials")
+    .doc("note");
+  const connection = db.doc("calendarConnections/" + user.uid);
+  const rows = [
+    db.collection("syncJobs").doc(),
+    db.collection("oauthStates").doc(),
+    db.collection("mcpEphemeral").doc(),
+    db.collection("mcpActions").doc(),
+  ];
+  const grant = db.doc("mcpAccounts/" + user.uid);
+  const oldKey = process.env.TOKEN_ENCRYPTION_KEY;
+  process.env.TOKEN_ENCRYPTION_KEY = "ab".repeat(32);
+  try {
+    expect((await request("/me", "GET", undefined, user)).status).toBe(200);
+    await nested.set({ text: "Fixture" });
+    await grant.set({ grants: {} });
+    await Promise.all(
+      rows.map((ref) => ref.set({ uid: user.uid, status: "done" })),
+    );
+    await connection.set({
+      connected: true,
+      encrypted_tokens: encrypt({ refresh_token: "calendar-test-token" }),
+    });
+    await expect(
+      requestDeletion(user.uid, Math.floor((now - 600_000) / 1000)),
+    ).rejects.toMatchObject({ statusCode: 403 });
+    expect(
+      (await request("/account/delete", "POST", { confirm: false }, user))
+        .status,
+    ).toBe(400);
+    const results = await Promise.all([
+      request("/account/delete", "POST", { confirm: true }, user),
+      request("/account/delete", "POST", { confirm: true }, user),
+    ]);
+    for (const result of results)
+      expect(result).toEqual({
+        status: 202,
+        data: { state: "deletion_requested" },
+      });
+    expect(
+      (
+        await request(
+          "/preferences/language",
+          "PATCH",
+          { language: "ru" },
+          user,
+        )
+      ).status,
+    ).toBe(410);
+    expect((await grant.get()).exists).toBe(false);
+    expect((await connection.get()).get("connected")).toBe(false);
+
+    const failure: typeof fetch = async () =>
+      new Response(null, { status: 503 });
+    await processDeletion(job, failure);
+    expect((await job.get()).get("attempts")).toBe(1);
+    expect((await connection.get()).exists).toBe(true);
+    expect((await auth.getUser(user.uid)).uid).toBe(user.uid);
+
+    await job.update({ nextAttemptAt: Date.now() });
+    let revocations = 0;
+    const revoke: typeof fetch = async (url, options) => {
+      revocations++;
+      expect(String(url)).toBe("https://oauth2.googleapis.com/revoke");
+      expect(String(options?.body)).toBe("token=calendar-test-token");
+      return new Response(JSON.stringify({ error: "invalid_token" }), {
+        status: 400,
+      });
+    };
+    await Promise.all([
+      processDeletion(job, revoke),
+      processDeletion(job, revoke),
+    ]);
+    expect(revocations).toBe(1);
+    expect((await job.get()).data()).toEqual({ completed: true });
+    for (const ref of [root, nested, connection, ...rows])
+      expect((await ref.get()).exists).toBe(false);
+    await expect(auth.getUser(user.uid)).rejects.toMatchObject({
+      code: "auth/user-not-found",
+    });
+    expect((await request("/me", "GET", undefined, other)).status).toBe(200);
+  } finally {
+    if (oldKey === undefined) delete process.env.TOKEN_ENCRYPTION_KEY;
+    else process.env.TOKEN_ENCRYPTION_KEY = oldKey;
+    await Promise.all([
+      db.recursiveDelete(root),
+      db.recursiveDelete(job),
+      ...[connection, grant, ...rows].map((ref) => ref.delete()),
+    ]);
+    await auth.deleteUser(user.uid).catch(() => {});
+  }
+});
+
+it("runs account deletion and Calendar reconciliation in the existing scheduled function", async () => {
+  const user = await googleUser();
+  const deletion = deletionRef(user.uid);
+  const root = db.doc("users/" + user.uid);
+  const calendarUid = crypto.randomUUID();
+  const calendarJob = db.collection("syncJobs").doc();
+  const calendar = db.doc("calendarConnections/" + calendarUid);
+  const dueAt = Date.now() - 1000;
+  try {
+    expect((await request("/me", "GET", undefined, user)).status).toBe(200);
+    expect(
+      (await request("/account/delete", "POST", { confirm: true }, user))
+        .status,
+    ).toBe(202);
+    await calendarJob.create({
+      uid: calendarUid,
+      type: "reconcile",
+      status: "running",
+      generation: 1,
+      leaseUntil: Date.now() + 600_000,
+    });
+    await calendar.create({
+      uid: calendarUid,
+      connected: true,
+      generation: 1,
+      nextReconcileAt: dueAt,
+      reconcileJobId: calendarJob.id,
+    });
+
+    await reconcileCalendar.run({ scheduleTime: new Date().toISOString() });
+
+    expect((await deletion.get()).data()).toEqual({ completed: true });
+    expect((await root.get()).exists).toBe(false);
+    await expect(auth.getUser(user.uid)).rejects.toMatchObject({
+      code: "auth/user-not-found",
+    });
+    expect((await calendar.get()).data()).toMatchObject({
+      connected: true,
+      reconcileJobId: calendarJob.id,
+    });
+    expect((await calendar.get()).get("nextReconcileAt")).toBeGreaterThan(
+      dueAt,
+    );
+    expect((await calendarJob.get()).get("status")).toBe("running");
+  } finally {
+    await Promise.all([
+      db.recursiveDelete(root),
+      db.recursiveDelete(deletion),
+      calendar.delete(),
+      calendarJob.delete(),
+    ]);
+    await auth.deleteUser(user.uid).catch((error) => {
+      if (error.code !== "auth/user-not-found") throw error;
+    });
   }
 });
