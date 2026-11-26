@@ -2083,11 +2083,6 @@ summary {
   margin-top: 12px;
 }
 
-.connect-open-assistant {
-  grid-column: 1 / -1;
-  justify-self: start;
-}
-
 .connect-platform .button,
 .connect-application .button {
   justify-self: start;
@@ -2207,7 +2202,13 @@ summary {
   gap: 8px;
 }
 
-.connect-address label {
+.connect-address:has(textarea) {
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: start;
+}
+
+.connect-address label,
+.connect-setup-address label {
   display: grid;
   gap: 5px;
   min-width: 0;
@@ -2215,12 +2216,36 @@ summary {
   font-weight: 600;
 }
 
-.connect-address input {
+.connect-address input,
+.connect-setup-address input {
   margin: 0;
   min-width: 0;
 }
 
-.connect-address p {
+.connect-address label:has(textarea) {
+  width: 100%;
+  margin: 0;
+}
+
+.connect-address textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.connect-address textarea:focus-visible {
+  outline: 2px solid var(--violet);
+  outline-offset: 2px;
+}
+
+.connect-address p,
+.connect-setup-address > p {
   grid-column: 1 / -1;
   font-size: 13px;
 }
@@ -2236,6 +2261,63 @@ summary {
 .connect-dialog-body {
   padding: 20px 24px 24px;
   font-size: 14px;
+}
+
+.connect-setup-dialog {
+  padding: 0;
+}
+
+.connect-setup-guide {
+  display: grid;
+  gap: 14px;
+}
+
+.connect-setup-address,
+.connect-setup-progress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.connect-setup-address > :is(details, p) {
+  flex-basis: 100%;
+}
+
+.connect-setup-address label {
+  margin-top: 8px;
+}
+
+.connect-setup-progress {
+  justify-content: space-between;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--soft);
+}
+
+.connect-setup-progress > div {
+  flex: 1 1 15rem;
+}
+
+.connect-setup-progress p,
+.connect-setup-help p {
+  color: var(--muted);
+  margin-top: 5px;
+}
+
+.connect-setup-help {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.connect-setup-help > summary {
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.connect-setup-help > :is(a, .connect-setup-guide) {
+  margin-top: 12px;
 }
 
 .connect-steps {
@@ -2429,6 +2511,10 @@ summary {
 }
 
 @media (max-width: 480px) {
+  .connect-open-assistant {
+    width: 100%;
+  }
+
   .connect-address {
     grid-template-columns: minmax(0, 1fr);
   }

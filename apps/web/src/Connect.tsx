@@ -34,25 +34,28 @@ const assistants = {
   chatgpt: {
     name: "ChatGPT",
     icon: MessageCircle,
-    home: "https://chatgpt.com/",
+    home: "https://chatgpt.com/plugins",
     requirement: "connectChatgptRequirement",
     steps: ["connectChatgptStep1", "connectChatgptStep2"],
+    help: "connectChatgptHelp",
     docs: "https://help.openai.com/en/articles/12584461-connecting-custom-mcp-servers-in-chatgpt",
   },
   claude: {
     name: "Claude",
     icon: Sun,
-    home: "https://claude.ai/",
+    home: "https://claude.ai/customize/connectors",
     requirement: "connectClaudeRequirement",
     steps: ["connectClaudeStep1", "connectClaudeStep2"],
+    help: "connectClaudeHelp",
     docs: "https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp",
   },
   gemini: {
     name: "Gemini",
     icon: Sparkles,
-    home: "https://gemini.google.com/",
+    home: "https://gemini.google.com/apps",
     requirement: "connectGeminiRequirement",
     steps: ["connectGeminiStep1", "connectGeminiStep2"],
+    help: "connectGeminiHelp",
     docs: "https://support.google.com/gemini/answer/17209137",
   },
   other: {
@@ -60,7 +63,8 @@ const assistants = {
     icon: Bot,
     home: undefined,
     requirement: "connectOtherRequirement",
-    steps: ["connectOtherStep1", "connectOtherStep2", "connectOtherStep3"],
+    steps: ["connectOtherStep1", "connectOtherStep2"],
+    help: "connectOtherHelp",
     docs: undefined,
   },
 } satisfies Record<
@@ -71,6 +75,7 @@ const assistants = {
     home?: string;
     requirement: MessageKey;
     steps: MessageKey[];
+    help: MessageKey;
     docs?: string;
   }
 >;
@@ -93,6 +98,15 @@ type Settings = {
   expiredPlatforms?: ConnectPlatform[];
 };
 type RevokeTarget = { application: Application | null };
+type Setup = { platform: ConnectPlatform; previous?: string[] };
+
+function newSetupGrants(data: Settings, setup: Setup) {
+  return data.applications.filter(
+    (app) =>
+      connectPlatformForHost(app.host) === setup.platform &&
+      !setup.previous?.includes(app.grantId ?? app.clientId),
+  );
+}
 
 function platformName(platform: ConnectPlatform) {
   return assistants[platform].name || translate("connectOther");
@@ -130,6 +144,7 @@ function CopyField({
   copiedLabel,
   failedLabel,
   assistantUrl,
+  advanced = false,
 }: {
   value: string;
   label: MessageKey;
@@ -137,34 +152,52 @@ function CopyField({
   copiedLabel: MessageKey;
   failedLabel: MessageKey;
   assistantUrl?: string;
+  advanced?: boolean;
 }) {
-  const input = useRef<HTMLInputElement>(null);
+  const input = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
+  const advancedDetails = useRef<HTMLDetailsElement>(null);
   const [result, setResult] = useState<"copied" | "failed">();
   async function copy() {
     try {
       await navigator.clipboard.writeText(value);
       setResult("copied");
     } catch {
+      if (advancedDetails.current) advancedDetails.current.open = true;
       input.current?.focus();
       input.current?.select();
       setResult("failed");
     }
   }
+  const fieldProps = {
+    ref: (element: HTMLInputElement | HTMLTextAreaElement | null) => {
+      input.current = element;
+    },
+    readOnly: true,
+    value,
+    onFocus: () => input.current?.select(),
+  };
+  const field = (
+    <label>
+      <span>{translate(label)}</span>
+      {label === "connectExample" ? (
+        <textarea {...fieldProps} rows={2} />
+      ) : (
+        <input {...fieldProps} />
+      )}
+    </label>
+  );
+  const copyButton = (
+    <Button
+      className={advanced && !assistantUrl ? "primary" : undefined}
+      type="button"
+      onClick={() => void copy()}
+    >
+      <Copy size={16} aria-hidden="true" />
+      {translate(copyLabel)}
+    </Button>
+  );
   return (
-    <div className="connect-address">
-      <label>
-        <span>{translate(label)}</span>
-        <input
-          ref={input}
-          readOnly
-          value={value}
-          onFocus={(event) => event.currentTarget.select()}
-        />
-      </label>
-      <Button type="button" onClick={() => void copy()}>
-        <Copy size={16} aria-hidden="true" />
-        {translate(copyLabel)}
-      </Button>
+    <div className={advanced ? "connect-setup-address" : "connect-address"}>
       {assistantUrl && (
         <a
           className="button primary connect-open-assistant"
@@ -177,10 +210,22 @@ function CopyField({
           <ExternalLink size={16} aria-hidden="true" />
         </a>
       )}
+      {!advanced && field}
+      {copyButton}
       {result && (
         <p role="status">
           {translate(result === "copied" ? copiedLabel : failedLabel)}
         </p>
+      )}
+      {advanced && (
+        <details className="connect-advanced" ref={advancedDetails}>
+          <summary>
+            {translate("connectAdvanced")}
+            <ChevronDown size={16} aria-hidden="true" />
+          </summary>
+          {field}
+          {!assistantUrl && <p>{translate("connectOtherTechnical")}</p>}
+        </details>
       )}
     </div>
   );
@@ -189,9 +234,11 @@ function CopyField({
 function ConnectionAddress({
   resource,
   assistantUrl,
+  advanced,
 }: {
   resource: string;
   assistantUrl?: string;
+  advanced?: boolean;
 }) {
   return (
     <CopyField
@@ -201,6 +248,7 @@ function ConnectionAddress({
       copiedLabel="connectCopied"
       failedLabel="connectCopyError"
       assistantUrl={assistantUrl}
+      advanced={advanced}
     />
   );
 }
@@ -227,12 +275,22 @@ function ExamplePrompt({ applications }: { applications: Application[] }) {
 function SetupDialog({
   platform,
   resource,
+  listing,
+  expired,
+  statusError,
+  checking,
+  onCheck,
   onClose,
   applications,
   replacing,
 }: {
   platform: ConnectPlatform;
   resource: string | null;
+  listing?: string;
+  expired: boolean;
+  statusError: boolean;
+  checking: boolean;
+  onCheck: () => void;
   onClose: () => void;
   applications: Application[];
   replacing: boolean;
@@ -240,22 +298,39 @@ function SetupDialog({
   const connected = applications.length > 0;
   const item = assistants[platform];
   const name = platformName(platform);
+  const available = !!(resource || listing);
+  const manualGuide = resource && (
+    <div className="connect-setup-guide">
+      <ConnectionAddress
+        resource={resource}
+        assistantUrl={item.home}
+        advanced
+      />
+      <ol className="connect-steps">
+        {item.steps.map((step) => (
+          <li key={step}>{translate(step)}</li>
+        ))}
+      </ol>
+    </div>
+  );
   return (
     <Dialog
       title={translate(
         connected
           ? "connectConnectedTitle"
-          : resource
+          : available
             ? replacing
               ? "connectReplaceTitle"
-              : "connectSetupTitle"
+              : expired
+                ? "connectReconnectTitle"
+                : "connectSetupTitle"
             : "connectRequirementsTitle",
         { platform: name },
       )}
       description={translate(
         connected
           ? "connectConnectedDescription"
-          : resource
+          : available
             ? replacing
               ? "connectReplaceSetup"
               : "connectSetupDescription"
@@ -264,35 +339,85 @@ function SetupDialog({
       )}
       onClose={onClose}
     >
-      <div className="connect-dialog-body">
+      <div className="connect-dialog-body connect-setup-dialog">
         {connected ? (
-          <ExamplePrompt applications={applications} />
-        ) : (
-          <p>{translate(item.requirement)}</p>
-        )}
-        {!connected && resource && (
           <>
-            <ol className="connect-steps">
-              {item.steps.map((step) => (
-                <li key={step}>{translate(step)}</li>
-              ))}
-            </ol>
-            <ConnectionAddress resource={resource} assistantUrl={item.home} />
-            {platform === "gemini" && (
-              <p>{translate("connectGeminiTroubleshooting")}</p>
-            )}
+            <ConnectNotice tone="success">
+              {translate("connectGrantDetected")}
+            </ConnectNotice>
+            <ExamplePrompt applications={applications} />
           </>
-        )}
-        {!connected && item.docs && (
-          <a
-            className="button connect-docs"
-            href={item.docs}
-            target="_blank"
-            rel="noreferrer"
-          >
-            {translate("connectProviderDocs")}{" "}
-            <ArrowUpRight size={16} aria-hidden="true" />
-          </a>
+        ) : (
+          <>
+            {listing && (
+              <a
+                className="button primary connect-docs"
+                href={listing}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {translate("connectListing")}
+                <ArrowUpRight size={16} aria-hidden="true" />
+              </a>
+            )}
+            {listing && manualGuide ? (
+              <details className="connect-setup-help">
+                <summary>{translate("connectManualSetup")}</summary>
+                {manualGuide}
+              </details>
+            ) : (
+              manualGuide
+            )}
+            {available && (
+              <div className="connect-setup-progress">
+                <div role="status">
+                  <strong>
+                    {translate(
+                      statusError
+                        ? "connectStatusUnavailable"
+                        : "connectWaiting",
+                    )}
+                  </strong>
+                  <p>
+                    {translate(
+                      statusError
+                        ? "connectSettingsError"
+                        : "connectWaitingDetail",
+                    )}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  aria-disabled={checking}
+                  onClick={() => {
+                    if (!checking) onCheck();
+                  }}
+                >
+                  {translate("connectCheckNow")}
+                </Button>
+              </div>
+            )}
+            <details
+              className="connect-setup-help"
+              open={available ? undefined : true}
+            >
+              <summary>{translate("connectSetupHelp")}</summary>
+              <p>{translate(item.requirement)}</p>
+              <p>{translate(item.help)}</p>
+              {available && <p>{translate("connectSignInHelp")}</p>}
+              {item.docs && (
+                <a
+                  className="button connect-docs"
+                  href={item.docs}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {translate("connectProviderDocs")}
+                  <ArrowUpRight size={16} aria-hidden="true" />
+                </a>
+              )}
+            </details>
+          </>
         )}
       </div>
     </Dialog>
@@ -393,10 +518,7 @@ export function ConnectSettings({
   const locale = useLanguage();
   const cache = useQueryClient();
   const heading = useRef<HTMLHeadingElement>(null);
-  const [setup, setSetup] = useState<{
-    platform: ConnectPlatform;
-    previous?: string[];
-  }>();
+  const [setup, setSetup] = useState<Setup>();
   const [revokeTarget, setRevokeTarget] = useState<RevokeTarget>();
   const [approvalTarget, setApprovalTarget] = useState<Application>();
   const [revoked, setRevoked] = useState(false);
@@ -410,6 +532,19 @@ export function ConnectSettings({
       }),
     staleTime: 0,
     refetchOnWindowFocus: true,
+    refetchInterval: ({ state: { data } }) => {
+      if (
+        !setup ||
+        !data?.enabled ||
+        !(
+          connectListings[setup.platform] ||
+          (data.resource && data.platforms?.[setup.platform])
+        ) ||
+        newSetupGrants(data, setup).length
+      )
+        return false;
+      return 4_000;
+    },
   });
   const refetch = settings.refetch;
   useEffect(() => {
@@ -483,6 +618,8 @@ export function ConnectSettings({
   const data = settings.data;
   const canSetUp = data?.enabled && !settings.isError && !!data.resource;
   const applications = data?.applications ?? [];
+  const setupGrants =
+    setup && data && canSetUp ? newSetupGrants(data, setup) : [];
   if (
     data &&
     !data.enabled &&
@@ -593,10 +730,14 @@ export function ConnectSettings({
             );
             const count = platformApps.length;
             if (!canSetUp && !count) return null;
+            const activeApps = platformApps.filter(
+              (app) => accessLabel(app, data) !== "connectPaused",
+            );
             const configured = data.platforms?.[key];
             const expired = data.expiredPlatforms?.includes(key);
             const listing = connectListings[key];
-            const setupLabel = !configured
+            const available = !!(configured || listing);
+            const setupLabel = !available
               ? "connectRequirements"
               : expired
                 ? "connectReconnect"
@@ -609,24 +750,34 @@ export function ConnectSettings({
                   </span>
                   <div>
                     <h3>{name}</h3>
-                    <p>{translate("connectActiveCount", { count })}</p>
+                    {activeApps.length > 0 && !settings.isError && (
+                      <p>
+                        {translate("connectActiveCount", {
+                          count: activeApps.length,
+                        })}
+                      </p>
+                    )}
                   </div>
                   <Badge
                     label={
-                      count
-                        ? data.enabled
-                          ? "connectConnected"
-                          : "connectPaused"
-                        : expired
-                          ? "connectConnectionExpired"
-                          : "connectNotConnected"
+                      settings.isError
+                        ? "connectStatusUnavailable"
+                        : count
+                          ? activeApps.length
+                            ? "connectConnected"
+                            : "connectPaused"
+                          : expired
+                            ? "connectConnectionExpired"
+                            : "connectNotConnected"
                     }
-                    active={!!count && data.enabled}
+                    active={!!activeApps.length && !settings.isError}
                   />
                 </div>
                 {count > 0 ? (
                   <>
-                    {canSetUp && <ExamplePrompt applications={platformApps} />}
+                    {canSetUp && activeApps.length > 0 && (
+                      <ExamplePrompt applications={activeApps} />
+                    )}
                     <details className="connect-provider-details">
                       <summary>
                         {translate("connectDetails")}
@@ -638,7 +789,11 @@ export function ConnectSettings({
                           application={application}
                           data={data}
                           locale={locale}
-                          busy={revoke.isPending || approval.isPending}
+                          busy={
+                            revoke.isPending ||
+                            approval.isPending ||
+                            settings.isError
+                          }
                           onApprovalChange={(approvalMode) => {
                             approval.reset();
                             if (approvalMode === "allow")
@@ -651,66 +806,33 @@ export function ConnectSettings({
                           }}
                         />
                       ))}
-                      {canSetUp &&
-                        data.expiredPlatforms &&
-                        (listing ? (
-                          <a
-                            className="button"
-                            href={listing}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            aria-label={translate("connectReplaceTitle", {
-                              platform: name,
-                            })}
-                          >
-                            {translate("connectReplace")}{" "}
-                            <ArrowUpRight size={15} aria-hidden="true" />
-                          </a>
-                        ) : (
-                          configured && (
-                            <Button
-                              type="button"
-                              aria-label={translate("connectReplaceTitle", {
-                                platform: name,
-                              })}
-                              onClick={() =>
-                                setSetup({
-                                  platform: key,
-                                  previous: platformApps.map(
-                                    (app) => app.grantId ?? app.clientId,
-                                  ),
-                                })
-                              }
-                            >
-                              {translate("connectReplace")}
-                            </Button>
-                          )
-                        ))}
+                      {canSetUp && data.expiredPlatforms && available && (
+                        <Button
+                          type="button"
+                          aria-label={translate("connectReplaceTitle", {
+                            platform: name,
+                          })}
+                          onClick={() =>
+                            setSetup({
+                              platform: key,
+                              previous: platformApps.map(
+                                (app) => app.grantId ?? app.clientId,
+                              ),
+                            })
+                          }
+                        >
+                          {translate("connectReplace")}
+                        </Button>
+                      )}
                     </details>
                   </>
-                ) : listing ? (
-                  <a
-                    className="button primary"
-                    href={listing}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label={translate(
-                      expired ? "connectReconnectTitle" : "connectListingFor",
-                      {
-                        platform: name,
-                      },
-                    )}
-                  >
-                    {translate(expired ? "connectReconnect" : "connectListing")}
-                    <ArrowUpRight size={15} aria-hidden="true" />
-                  </a>
                 ) : (
                   <Button
-                    className={configured ? "primary" : ""}
+                    className={available ? "primary" : ""}
                     type="button"
                     onClick={() => setSetup({ platform: key })}
                     aria-label={translate(
-                      !configured
+                      !available
                         ? "connectRequirementsTitle"
                         : expired
                           ? "connectReconnectTitle"
@@ -727,43 +849,37 @@ export function ConnectSettings({
           })}
         </ul>
       )}
-      {canSetUp &&
-        data?.resource &&
-        connectPlatforms.some(
-          (key) =>
-            data.platforms?.[key] &&
-            !connectListings[key] &&
-            !applications.some(
-              (app) => connectPlatformForHost(app.host) === key,
-            ),
-        ) && (
-          <details className="connect-advanced">
-            <summary>
-              {translate("connectAdvanced")}{" "}
-              <ChevronDown size={17} aria-hidden="true" />
-            </summary>
-            <p>{translate("connectAdvancedHint")}</p>
-            <ConnectionAddress resource={data.resource} />
-          </details>
-        )}
+      {canSetUp && data.resource && (
+        <details className="connect-advanced">
+          <summary>
+            {translate("connectAdvanced")}{" "}
+            <ChevronDown size={17} aria-hidden="true" />
+          </summary>
+          <p>{translate("connectAdvancedHint")}</p>
+          <ConnectionAddress resource={data.resource} />
+        </details>
+      )}
       {setup && data && (
         <SetupDialog
           key={setup.platform}
           platform={setup.platform}
           resource={
-            canSetUp && data.platforms?.[setup.platform] ? data.resource : null
+            data.enabled && data.platforms?.[setup.platform]
+              ? data.resource
+              : null
           }
+          listing={data.enabled ? connectListings[setup.platform] : undefined}
+          expired={data.expiredPlatforms?.includes(setup.platform) ?? false}
+          statusError={settings.isError}
+          checking={settings.isFetching}
+          onCheck={() => void refetch({ cancelRefetch: false })}
           replacing={!!setup.previous}
-          applications={
-            canSetUp
-              ? applications.filter(
-                  (app) =>
-                    connectPlatformForHost(app.host) === setup.platform &&
-                    !setup.previous?.includes(app.grantId ?? app.clientId),
-                )
-              : []
-          }
-          onClose={() => setSetup(undefined)}
+          applications={setupGrants}
+          onClose={() => {
+            setSetup(undefined);
+            if (setupGrants.length && !setup.previous)
+              requestAnimationFrame(() => heading.current?.focus());
+          }}
         />
       )}
       {approvalTarget && (

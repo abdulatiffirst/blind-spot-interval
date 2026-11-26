@@ -385,6 +385,8 @@ test("shows provider states and manual setup with a loading skeleton, retry and 
     },
   ];
   let geminiConnected = false;
+  let otherAvailable = false;
+  let connectionError = false;
   let first = true;
   let release!: () => void;
   const wait = new Promise<void>((resolve) => {
@@ -399,12 +401,22 @@ test("shows provider states and manual setup with a loading skeleton, retry and 
         json: { error: "Test connection error" },
       });
     }
+    if (connectionError)
+      return route.fulfill({
+        status: 503,
+        json: { error: "Test connection error" },
+      });
     await route.fulfill({
       json: {
         enabled: true,
         writes: true,
         resource,
-        platforms: { chatgpt: true, claude: true, gemini: true, other: false },
+        platforms: {
+          chatgpt: true,
+          claude: true,
+          gemini: true,
+          other: otherAvailable,
+        },
         expiredPlatforms: ["claude"],
         applications: [
           {
@@ -498,12 +510,16 @@ test("shows provider states and manual setup with a loading skeleton, retry and 
   await section.getByRole("button", { name: "Set up Gemini" }).click();
   let dialog = page.getByRole("dialog", { name: "Set up Gemini" });
   await expect(dialog.getByRole("listitem")).toHaveText([
-    /Customize → Connectors → Custom/,
-    /Paste the URL, select Next, and follow the prompts/,
+    /Settings → Connected Apps/,
+    /Paste the URL, select Next, and follow the sign-in prompts/,
   ]);
+  await expect(dialog.getByText("Waiting for approval")).toBeVisible();
   await expect(
-    dialog.getByText(/If Gemini reports an unapproved callback/),
-  ).toBeVisible();
+    dialog.getByRole("textbox", { name: "MCP server URL" }),
+  ).toBeHidden();
+  await capture(page, info, "setup-light-en", dialog);
+  await dialog.getByText("Trouble connecting?", { exact: true }).click();
+  await expect(dialog.getByText(/If Connected Apps is missing/)).toBeVisible();
   await expect(
     dialog.getByRole("link", { name: "Official setup guide" }),
   ).toHaveAttribute(
@@ -512,7 +528,7 @@ test("shows provider states and manual setup with a loading skeleton, retry and 
   );
   await page
     .context()
-    .route("https://gemini.google.com/", (route) =>
+    .route("https://gemini.google.com/apps", (route) =>
       route.fulfill({ body: "Gemini test tab" }),
     );
   const popupPromise = page.waitForEvent("popup");
@@ -520,7 +536,7 @@ test("shows provider states and manual setup with a loading skeleton, retry and 
   const popup = await popupPromise;
   await expect(popup.getByText("Gemini test tab")).toBeVisible();
   await popup.close();
-  await expect(dialog.getByRole("status")).toHaveText("URL copied.");
+  await expect(dialog.getByText("URL copied.", { exact: true })).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute(
     "data-copied-address",
     resource,
@@ -529,13 +545,13 @@ test("shows provider states and manual setup with a loading skeleton, retry and 
     html.dataset.clipboardFails = "true";
   });
   await dialog.getByRole("button", { name: "Copy URL" }).click();
-  await expect(dialog.getByRole("status")).toHaveText(
-    "Select and copy the URL manually.",
-  );
+  await expect(
+    dialog.getByText("Select and copy the URL manually.", { exact: true }),
+  ).toBeVisible();
   await expect(
     dialog.getByRole("textbox", { name: "MCP server URL" }),
   ).toBeFocused();
-  await capture(page, info, "setup-light-en", dialog);
+  await capture(page, info, "setup-copy-fallback-en", dialog);
   await page.keyboard.press("Escape");
   await section
     .getByRole("button", { name: "Other AI assistants requirements" })
@@ -544,18 +560,37 @@ test("shows provider states and manual setup with a loading skeleton, retry and 
     name: "Other AI assistants requirements",
   });
   await expect(dialog.getByRole("textbox")).toHaveCount(0);
-  await expect(dialog.getByText(/supports a remote server/)).toBeVisible();
+  await expect(dialog.getByText(/support remote MCP/)).toBeVisible();
+  otherAvailable = true;
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await section
+    .getByRole("button", { name: "Set up Other AI assistants" })
+    .click();
+  dialog = page.getByRole("dialog", { name: "Set up Other AI assistants" });
+  await expect(dialog.getByText("Waiting for approval")).toBeVisible();
+  await dialog
+    .getByText("Advanced connection settings", { exact: true })
+    .click();
+  await expect(
+    dialog.getByRole("textbox", { name: "MCP server URL" }),
+  ).toHaveValue(resource);
+  await expect(dialog.getByText(/Streamable HTTP/)).toBeVisible();
   await page.keyboard.press("Escape");
 
   await page.getByRole("button", { name: "Русский" }).click();
   await page.getByRole("button", { name: "Настройка Gemini" }).click();
   dialog = page.getByRole("dialog", { name: "Настройка Gemini" });
   await expect(dialog.getByRole("listitem")).toHaveText([
-    /Customize → Connectors → Custom/,
-    /Вставьте URL, нажмите Next и следуйте подсказкам/,
+    /Settings → Connected Apps/,
+    /Вставьте адрес, нажмите Next и следуйте подсказкам/,
   ]);
+  await capture(page, info, "setup-ru", dialog);
+  await dialog
+    .getByText("Не получается подключиться?", { exact: true })
+    .click();
   await expect(
-    dialog.getByText(/Если Gemini сообщает, что адрес возврата не разрешён/),
+    dialog.getByText(/Если раздела Connected Apps нет/),
   ).toBeVisible();
   await expect(
     dialog.getByRole("button", { name: "Скопировать адрес" }),
@@ -569,14 +604,27 @@ test("shows provider states and manual setup with a loading skeleton, retry and 
   await page.locator("html").evaluate((html) => {
     delete html.dataset.clipboardFails;
   });
+  connectionError = true;
+  await dialog.getByRole("button", { name: "Проверить сейчас" }).click();
+  await expect(dialog.getByText("Статус недоступен")).toBeVisible();
+  await expect(
+    page.getByRole("dialog", { name: "Gemini подключён" }),
+  ).toBeHidden();
+  connectionError = false;
   geminiConnected = true;
-  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  // The open dialog discovers the grant without a focus event or manual reload.
   const success = page.getByRole("dialog", { name: "Gemini подключён" });
+  await expect(
+    success.getByText("Blind Spot получил ваше разрешение."),
+  ).toBeVisible();
   await expect(
     success.getByRole("textbox", { name: "Пример запроса" }),
   ).toHaveValue("Покажи через Blind Spot мои повторения на сегодня.");
   await success.getByRole("button", { name: "Скопировать запрос" }).click();
-  await expect(success.getByRole("status")).toHaveText("Запрос скопирован.");
+  await expect(
+    success.getByText("Запрос скопирован.", { exact: true }),
+  ).toBeVisible();
+  await capture(page, info, "connected-ru", success);
   await page.keyboard.press("Escape");
 
   await page.getByRole("button", { name: "Сменить тему" }).click();
@@ -627,6 +675,13 @@ test("shows provider states and manual setup with a loading skeleton, retry and 
   const replaceDialog = page.getByRole("dialog", {
     name: "Заменить подключение Gemini",
   });
+  await expect(
+    replaceDialog.getByText("Ожидаем подтверждения доступа"),
+  ).toBeVisible();
+  await capture(page, info, "setup-replace-dark-ru", replaceDialog);
+  await replaceDialog
+    .getByText("Расширенные настройки подключения", { exact: true })
+    .click();
   await expect(
     replaceDialog.getByRole("textbox", { name: "Адрес MCP-сервера" }),
   ).toHaveValue(resource);
