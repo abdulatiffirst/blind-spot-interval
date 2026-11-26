@@ -903,8 +903,8 @@ describe.skipIf(process.env.BLIND_SPOT_CONNECT_ENABLED !== "true")(
           ].includes(tool.name);
           expect(tool.annotations).toMatchObject({
             readOnlyHint: !write,
-            openWorldHint: write,
-            destructiveHint: write,
+            openWorldHint: false,
+            destructiveHint: write && tool.name !== "create_topic",
             idempotentHint: true,
           });
           expect(tool._meta?.securitySchemes).toMatchObject([

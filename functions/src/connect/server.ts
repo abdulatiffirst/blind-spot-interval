@@ -211,9 +211,9 @@ export function toolsFor(p: Principal, settings: Config) {
         },
         annotations: {
           readOnlyHint: !write,
-          destructiveHint: write,
+          destructiveHint: write && name !== "create_topic",
           idempotentHint: true,
-          openWorldHint: write,
+          openWorldHint: false,
         },
       },
       async (input) => {

@@ -68,8 +68,8 @@ describe("MCP schema and ranking contracts", () => {
         ].includes(tool.name);
         expect(tool.annotations).toMatchObject({
           readOnlyHint: !writes,
-          destructiveHint: writes,
-          openWorldHint: writes,
+          destructiveHint: writes && tool.name !== "create_topic",
+          openWorldHint: false,
         });
         expect(tool.inputSchema.additionalProperties, tool.name).toBe(false);
         expect(tool.outputSchema, tool.name).toBeTruthy();
