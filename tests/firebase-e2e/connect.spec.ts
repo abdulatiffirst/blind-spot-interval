@@ -186,6 +186,8 @@ test("approves read and write consents and a topic, then revokes the app in Russ
     await expect(
       page.getByRole("heading", { name: "Connected AI Applications" }),
     ).toBeVisible();
+    await page.getByText("Connection details", { exact: true }).click();
+    await page.getByText("Connect Tests", { exact: true }).click();
     await expect(page.getByText("Read and write access").first()).toBeVisible();
     await expect(
       page.getByRole("textbox", { name: "MCP server URL" }),
@@ -309,6 +311,27 @@ test("shows provider states and manual setup with a loading skeleton, retry and 
       },
     });
   });
+  const geminiGrants = [
+    {
+      clientId: "gemini-reviews",
+      grantId: "review-grant",
+      name: "Google review workspace",
+      host: "oauth-redirect.googleusercontent.com",
+      scopes: ["reviews:read", "reviews:write"],
+      approvalMode: "allow",
+      connectedAt: "2026-11-20T10:15:00.000Z",
+    },
+    {
+      clientId: "gemini-topics",
+      grantId: "topic-grant",
+      name: "Google topics workspace",
+      host: "oauth-redirect-test.googleusercontent.com",
+      scopes: ["topics:read"],
+      approvalMode: "ask",
+      connectedAt: "2026-11-20T10:20:00.000Z",
+    },
+  ];
+  let geminiConnected = false;
   let first = true;
   let release!: () => void;
   const wait = new Promise<void>((resolve) => {
@@ -326,17 +349,19 @@ test("shows provider states and manual setup with a loading skeleton, retry and 
     await route.fulfill({
       json: {
         enabled: true,
-        writes: false,
+        writes: true,
         resource,
         platforms: { chatgpt: true, claude: true, gemini: true, other: false },
+        expiredPlatforms: ["claude"],
         applications: [
           {
             clientId: "sample-chatgpt",
             name: "Blind Spot for ChatGPT",
             host: "chatgpt.com",
-            scopes: ["topics:read", "topics:write"],
+            scopes: ["topics:read"],
             connectedAt: "2026-11-20T10:00:00.000Z",
           },
+          ...(geminiConnected ? geminiGrants : []),
         ],
       },
     });
@@ -349,9 +374,6 @@ test("shows provider states and manual setup with a loading skeleton, retry and 
   release();
   await expect(section.getByRole("alert")).toContainText("Connection error");
   await section.getByRole("button", { name: "Reload connections" }).click();
-  await expect(
-    section.getByText("Connect is in read-only mode.", { exact: false }),
-  ).toBeVisible();
 
   for (const name of ["ChatGPT", "Claude", "Gemini", "Other AI assistants"]) {
     await expect(
@@ -365,13 +387,33 @@ test("shows provider states and manual setup with a loading skeleton, retry and 
   await expect(
     platform("ChatGPT").getByText("Connected", { exact: true }),
   ).toBeVisible();
-  await expect(platform("ChatGPT").getByText("Read-only access")).toBeVisible();
+  await expect(
+    platform("ChatGPT").getByText("Active connections: 1"),
+  ).toBeVisible();
+  await expect(
+    platform("ChatGPT").getByRole("button", { name: "Set up ChatGPT" }),
+  ).toHaveCount(0);
   await expect(platform("Gemini").getByText("Not connected")).toBeVisible();
   await expect(
-    platform("Other AI assistants").getByText("Platform unavailable"),
+    platform("Claude").getByText("Connection expired"),
   ).toBeVisible();
-  await expect(section.getByText("Granted permissions")).toBeVisible();
-  await expect(section.locator("time")).toHaveAttribute(
+  await expect(
+    platform("Claude").getByRole("button", { name: "Reconnect Claude" }),
+  ).toBeVisible();
+  await expect(
+    platform("Other AI assistants").getByText("Not connected"),
+  ).toBeVisible();
+  await expect(section.getByText("Granted permissions")).toBeHidden();
+  await platform("ChatGPT")
+    .getByText("Connection details", { exact: true })
+    .click();
+  await platform("ChatGPT")
+    .getByText("Blind Spot for ChatGPT", { exact: true })
+    .click();
+  await expect(
+    platform("ChatGPT").getByText("Granted permissions"),
+  ).toBeVisible();
+  await expect(platform("ChatGPT").locator("time")).toHaveAttribute(
     "datetime",
     "2026-11-20T10:00:00.000Z",
   );
@@ -404,8 +446,7 @@ test("shows provider states and manual setup with a loading skeleton, retry and 
   let dialog = page.getByRole("dialog", { name: "Set up Gemini" });
   await expect(dialog.getByRole("listitem")).toHaveText([
     /Customize → Connectors → Custom/,
-    /paste it into Gemini, then select Next/,
-    /sign in and review the requested permissions/,
+    /Paste the URL, select Next, and follow the prompts/,
   ]);
   await expect(
     dialog.getByText(/If Gemini reports an unapproved callback/),
@@ -416,7 +457,16 @@ test("shows provider states and manual setup with a loading skeleton, retry and 
     "href",
     "https://support.google.com/gemini/answer/17209137",
   );
-  await dialog.getByRole("button", { name: "Copy URL" }).click();
+  await page
+    .context()
+    .route("https://gemini.google.com/", (route) =>
+      route.fulfill({ body: "Gemini test tab" }),
+    );
+  const popupPromise = page.waitForEvent("popup");
+  await dialog.getByRole("link", { name: "Copy URL & Open Assistant" }).click();
+  const popup = await popupPromise;
+  await expect(popup.getByText("Gemini test tab")).toBeVisible();
+  await popup.close();
   await expect(dialog.getByRole("status")).toHaveText("URL copied.");
   await expect(page.locator("html")).toHaveAttribute(
     "data-copied-address",
@@ -449,8 +499,7 @@ test("shows provider states and manual setup with a loading skeleton, retry and 
   dialog = page.getByRole("dialog", { name: "Настройка Gemini" });
   await expect(dialog.getByRole("listitem")).toHaveText([
     /Customize → Connectors → Custom/,
-    /вставьте его в Gemini и нажмите Next/,
-    /войдите и проверьте запрошенные разрешения/,
+    /Вставьте URL, нажмите Next и следуйте подсказкам/,
   ]);
   await expect(
     dialog.getByText(/Если Gemini сообщает, что адрес возврата не разрешён/),
@@ -464,6 +513,61 @@ test("shows provider states and manual setup with a loading skeleton, retry and 
     "href",
     "https://support.google.com/gemini/answer/17209137",
   );
+  await page.locator("html").evaluate((html) => {
+    delete html.dataset.clipboardFails;
+  });
+  geminiConnected = true;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  const success = page.getByRole("dialog", { name: "Gemini подключён" });
+  await expect(
+    success.getByRole("textbox", { name: "Пример запроса" }),
+  ).toHaveValue("Покажи через Blind Spot мои повторения на сегодня.");
+  await success.getByRole("button", { name: "Скопировать запрос" }).click();
+  await expect(success.getByRole("status")).toHaveText("Запрос скопирован.");
+  await page.keyboard.press("Escape");
+
+  await page.getByRole("button", { name: "Сменить тему" }).click();
+  await expect(page.locator("html")).toHaveClass(/dark/);
+  const russian = page.getByRole("region", {
+    name: "Подключённые ИИ-приложения",
+  });
+  const groupedGemini = russian.getByRole("listitem").filter({
+    has: page.getByRole("heading", { name: "Gemini", exact: true }),
+  });
+  await expect(groupedGemini).toHaveCount(1);
+  await expect(
+    groupedGemini.getByText("Активных подключений: 2"),
+  ).toBeVisible();
+  await expect(
+    groupedGemini.getByRole("button", { name: "Настройка Gemini" }),
+  ).toHaveCount(0);
+  await groupedGemini
+    .getByText("Сведения о подключениях", { exact: true })
+    .click();
+  const reviews = groupedGemini
+    .locator("details.connect-application")
+    .filter({ hasText: "Google review workspace" });
+  const topics = groupedGemini
+    .locator("details.connect-application")
+    .filter({ hasText: "Google topics workspace" });
+  await expect(reviews.getByRole("combobox")).toBeHidden();
+  await reviews.locator("summary").click();
+  await topics.locator("summary").click();
+  await expect(reviews.getByRole("combobox")).toHaveValue("allow");
+  await expect(topics.getByRole("combobox")).toHaveValue("ask");
+  await expect(reviews.locator("time")).toHaveAttribute(
+    "datetime",
+    "2026-11-20T10:15:00.000Z",
+  );
+  await expect(topics.locator("time")).toHaveAttribute(
+    "datetime",
+    "2026-11-20T10:20:00.000Z",
+  );
+  await expect(reviews.locator(".connect-granted li")).toHaveCount(2);
+  await expect(topics.locator(".connect-granted li")).toHaveCount(1);
+  await expect(reviews.getByRole("button")).toHaveCount(1);
+  await expect(topics.getByRole("button")).toHaveCount(1);
+  await capture(page, info, "settings-grouped-dark-ru", groupedGemini);
 });
 
 test("hides disabled setup and still revokes existing grants", async ({
@@ -513,7 +617,9 @@ test("hides disabled setup and still revokes existing grants", async ({
       region.getByText("Connect disabled", { exact: true }),
     ).toBeVisible();
     await expect(
-      region.getByText("Access paused", { exact: true }),
+      region
+        .getByText("Access paused", { exact: true })
+        .filter({ visible: true }),
     ).toBeVisible();
     await expect(
       region.getByRole("button", { name: /Set up|requirements/i }),
@@ -534,6 +640,10 @@ test("hides disabled setup and still revokes existing grants", async ({
     await capture(page, info, "settings-disabled-dark-ru", russian);
     await page.getByRole("button", { name: "English" }).click();
     await expect(page.getByRole("button", { name: "English" })).toBeEnabled();
+    await region.getByText("Connection details", { exact: true }).click();
+    await region
+      .getByText("Previously authorized app", { exact: true })
+      .click();
     await region
       .getByRole("button", { name: "Revoke access", exact: true })
       .click();

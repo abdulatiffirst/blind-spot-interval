@@ -1933,7 +1933,6 @@ summary {
 .connect-settings-header,
 .connect-flow-header,
 .connect-app-summary,
-.connect-applications-header,
 .connect-platform-top,
 .connect-signed-in {
   display: flex;
@@ -1954,7 +1953,6 @@ summary {
 
 .connect-settings h2,
 .connect-settings h3,
-.connect-settings h4,
 .connect-flow h2 {
   margin: 0;
 }
@@ -1999,13 +1997,11 @@ summary {
   height: 40px;
 }
 
-.connect-jump,
 .connect-docs {
   align-self: start;
 }
 
-.connect-grid,
-.connect-grants {
+.connect-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
@@ -2026,13 +2022,66 @@ summary {
 .connect-platform {
   background: var(--soft);
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  align-content: start;
   gap: 12px;
 }
 
-.connect-platform-top,
+.connect-platform-top > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.connect-platform-top {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.connect-platform-top p {
+  margin: 2px 0 0;
+  font-size: 12px;
+}
+
+.connect-provider-details > summary,
 .connect-app-summary {
-  align-items: flex-start;
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+}
+
+.connect-provider-details > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.connect-provider-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.connect-provider-details[open] > summary svg,
+.connect-application[open] > summary svg {
+  transform: rotate(180deg);
+}
+
+.connect-application > summary {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.connect-application > summary > span:first-child {
+  flex: 1 1 8rem;
+  overflow-wrap: anywhere;
+}
+
+.connect-grant-body {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.connect-open-assistant {
+  grid-column: 1 / -1;
+  justify-self: start;
 }
 
 .connect-platform .button,
@@ -2066,42 +2115,10 @@ summary {
   border-color: color-mix(in srgb, var(--lime) 35%, var(--border));
 }
 
-.connect-platform .connect-access-summary {
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.settings-card .connect-manual-note {
-  margin: 0;
-}
-
-.connect-applications {
-  display: grid;
-  gap: 12px;
-}
-
-.connect-applications-header h3,
-.connect-advanced summary,
-.connect-back {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.connect-applications-header {
-  flex-wrap: wrap;
-}
-
-.connect-applications-header h3 {
-  scroll-margin-top: 7rem;
-}
-
 .connect-application {
-  display: grid;
-  align-content: start;
-  gap: 12px;
-  scroll-margin-top: 7rem;
+  margin-top: 8px;
+  padding: 10px;
+  background: var(--panel);
 }
 
 .connect-approval {
@@ -2126,31 +2143,13 @@ summary {
   color: var(--muted);
 }
 
-.connect-application:target {
-  border-color: var(--violet);
-}
-
-.connect-application h4 {
-  font-size: 15px;
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
-
 .connect-app-identity {
   min-width: 0;
 }
 
 .connect-app-identity p,
-.connect-granted,
-.connect-empty {
+.connect-granted {
   font-size: 13px;
-}
-
-.connect-empty {
-  color: var(--muted);
-  border: 1px dashed var(--border);
-  border-radius: 8px;
-  padding: 12px 14px;
 }
 
 .connect-granted ul,
@@ -2168,6 +2167,13 @@ summary {
 .settings-card .connect-advanced {
   padding-top: 12px;
   margin: 0;
+}
+
+.connect-advanced summary,
+.connect-back {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .connect-advanced summary {
@@ -2292,7 +2298,6 @@ summary {
   margin-bottom: 16px;
 }
 
-.connect-platform-actions,
 .connect-header-controls,
 .connect-request-identity,
 .connect-actions {
@@ -2376,10 +2381,6 @@ summary {
   accent-color: #617b16;
 }
 
-.connect-platform-actions {
-  flex-wrap: wrap;
-}
-
 .connect-actions {
   justify-content: flex-end;
   flex-wrap: wrap;
@@ -2418,8 +2419,7 @@ summary {
 }
 
 @container (max-width: 640px) {
-  .connect-grid,
-  .connect-grants {
+  .connect-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 }
