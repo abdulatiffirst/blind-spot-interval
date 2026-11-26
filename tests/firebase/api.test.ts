@@ -2,6 +2,7 @@ import {
   processDeletion,
   requestDeletion,
 } from "../../functions/src/account-deletion.ts";
+import { reconcileCalendar } from "../../functions/src/index.ts";
 import { encrypt } from "../../apps/api/src/security.ts";
 import { beforeAll, afterAll, describe, it, expect } from "vitest";
 import { db, auth, deletionRef } from "../../functions/src/store.ts";
@@ -687,5 +688,62 @@ it("blocks writes immediately and retries account deletion without deleting othe
       ...[connection, grant, ...rows].map((ref) => ref.delete()),
     ]);
     await auth.deleteUser(user.uid).catch(() => {});
+  }
+});
+
+it("runs account deletion and Calendar reconciliation in the existing scheduled function", async () => {
+  const user = await googleUser();
+  const deletion = deletionRef(user.uid);
+  const root = db.doc("users/" + user.uid);
+  const calendarUid = crypto.randomUUID();
+  const calendarJob = db.collection("syncJobs").doc();
+  const calendar = db.doc("calendarConnections/" + calendarUid);
+  const dueAt = Date.now() - 1000;
+  try {
+    expect((await request("/me", "GET", undefined, user)).status).toBe(200);
+    expect(
+      (await request("/account/delete", "POST", { confirm: true }, user))
+        .status,
+    ).toBe(202);
+    await calendarJob.create({
+      uid: calendarUid,
+      type: "reconcile",
+      status: "running",
+      generation: 1,
+      leaseUntil: Date.now() + 600_000,
+    });
+    await calendar.create({
+      uid: calendarUid,
+      connected: true,
+      generation: 1,
+      nextReconcileAt: dueAt,
+      reconcileJobId: calendarJob.id,
+    });
+
+    await reconcileCalendar.run({ scheduleTime: new Date().toISOString() });
+
+    expect((await deletion.get()).data()).toEqual({ completed: true });
+    expect((await root.get()).exists).toBe(false);
+    await expect(auth.getUser(user.uid)).rejects.toMatchObject({
+      code: "auth/user-not-found",
+    });
+    expect((await calendar.get()).data()).toMatchObject({
+      connected: true,
+      reconcileJobId: calendarJob.id,
+    });
+    expect((await calendar.get()).get("nextReconcileAt")).toBeGreaterThan(
+      dueAt,
+    );
+    expect((await calendarJob.get()).get("status")).toBe("running");
+  } finally {
+    await Promise.all([
+      db.recursiveDelete(root),
+      db.recursiveDelete(deletion),
+      calendar.delete(),
+      calendarJob.delete(),
+    ]);
+    await auth.deleteUser(user.uid).catch((error) => {
+      if (error.code !== "auth/user-not-found") throw error;
+    });
   }
 });

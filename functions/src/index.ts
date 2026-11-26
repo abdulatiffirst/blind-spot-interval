@@ -1,10 +1,9 @@
-import { processDeletions } from "./account-deletion.ts";
 import { setGlobalOptions } from "firebase-functions/v2";
 import { onRequest } from "firebase-functions/v2/https";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { createApp } from "./http.ts";
-import { processJob, reconcile } from "./jobs.ts";
+import { processJob, runScheduledMaintenance } from "./jobs.ts";
 import { emulator } from "./calendar.ts";
 setGlobalOptions({ region: "europe-west1", maxInstances: 10 });
 const secrets = emulator()
@@ -34,12 +33,5 @@ export const reconcileCalendar = onSchedule(
     memory: "512MiB",
     secrets,
   },
-  async () => {
-    await reconcile();
-  },
-);
-
-export const deleteAccounts = onSchedule(
-  { schedule: "* * * * *", timeoutSeconds: 480, memory: "512MiB", secrets },
-  processDeletions,
+  runScheduledMaintenance,
 );

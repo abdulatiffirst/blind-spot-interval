@@ -12,7 +12,8 @@ import {
   userRef,
 } from "./store.ts";
 
-const leaseMs = 9 * 60_000;
+// Leave time for the shared 540-second scheduler invocation to terminate.
+const leaseMs = 10 * 60_000;
 const syncLock = (uid: string) => db.collection("syncLocks").doc(uid);
 const retryDelay = (attempt: number) =>
   Math.min(60 * 60_000, 60_000 * 2 ** Math.min(attempt, 6));
