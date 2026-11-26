@@ -7,6 +7,7 @@ import { config, scopes } from "../functions/src/connect/oauth.ts";
 import { prioritize } from "../functions/src/connect/reads.ts";
 import { toolsFor } from "../functions/src/connect/server.ts";
 import { createApp } from "../functions/src/http.ts";
+import { connectListingUrl } from "../apps/web/src/connect-listings.ts";
 import {
   connectPlatformForHost,
   connectPlatformsForRedirects,
@@ -188,4 +189,31 @@ it("identifies assistant setup from configured callback URLs and grants from the
   expect(
     connectPlatformForHost("oauth-redirect-test.googleusercontent.com"),
   ).toBe("gemini");
+});
+
+describe("official Connect listing links", () => {
+  it("accepts only HTTPS listing pages on the configured provider's own host", () => {
+    expect(
+      connectListingUrl("claude", "https://claude.com/connectors/sample"),
+    ).toBe("https://claude.com/connectors/sample");
+    expect(connectListingUrl("gemini", undefined)).toBeUndefined();
+    expect(
+      connectListingUrl("gemini", "https://gemini.google.com/"),
+    ).toBeUndefined();
+    expect(
+      connectListingUrl("gemini", "https://claude.ai/sample"),
+    ).toBeUndefined();
+    expect(
+      connectListingUrl(
+        "chatgpt",
+        "https://chatgpt.com.example.invalid/sample",
+      ),
+    ).toBeUndefined();
+    expect(
+      connectListingUrl("chatgpt", "https://name@chatgpt.com/sample"),
+    ).toBeUndefined();
+    expect(
+      connectListingUrl("chatgpt", "http://chatgpt.com/sample"),
+    ).toBeUndefined();
+  });
 });

@@ -1,15 +1,14 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowDown,
   ArrowRight,
   ArrowUpRight,
   Bot,
   Cable,
+  ExternalLink,
   ChevronDown,
   Copy,
   MessageCircle,
-  ShieldCheck,
   Sparkles,
   Sun,
 } from "lucide-react";
@@ -21,6 +20,7 @@ import {
   type ConnectPlatform,
 } from "../../../packages/shared/src/connect-platforms.ts";
 import { api } from "./api";
+import { connectListings } from "./connect-listings";
 import { Button, Dialog } from "./ui";
 import { translate, useLanguage, type Language, type MessageKey } from "./i18n";
 import {
@@ -34,35 +34,31 @@ const assistants = {
   chatgpt: {
     name: "ChatGPT",
     icon: MessageCircle,
-    hint: "connectChatgptHint",
+    home: "https://chatgpt.com/",
     requirement: "connectChatgptRequirement",
-    steps: [
-      "connectChatgptStep1",
-      "connectChatgptStep2",
-      "connectChatgptStep3",
-    ],
+    steps: ["connectChatgptStep1", "connectChatgptStep2"],
     docs: "https://help.openai.com/en/articles/12584461-connecting-custom-mcp-servers-in-chatgpt",
   },
   claude: {
     name: "Claude",
     icon: Sun,
-    hint: "connectClaudeHint",
+    home: "https://claude.ai/",
     requirement: "connectClaudeRequirement",
-    steps: ["connectClaudeStep1", "connectClaudeStep2", "connectClaudeStep3"],
+    steps: ["connectClaudeStep1", "connectClaudeStep2"],
     docs: "https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp",
   },
   gemini: {
     name: "Gemini",
     icon: Sparkles,
-    hint: "connectGeminiHint",
+    home: "https://gemini.google.com/",
     requirement: "connectGeminiRequirement",
-    steps: ["connectGeminiStep1", "connectGeminiStep2", "connectGeminiStep3"],
+    steps: ["connectGeminiStep1", "connectGeminiStep2"],
     docs: "https://support.google.com/gemini/answer/17209137",
   },
   other: {
     name: "",
     icon: Bot,
-    hint: "connectOtherHint",
+    home: undefined,
     requirement: "connectOtherRequirement",
     steps: ["connectOtherStep1", "connectOtherStep2", "connectOtherStep3"],
     docs: undefined,
@@ -72,7 +68,7 @@ const assistants = {
   {
     name: string;
     icon: typeof Bot;
-    hint: MessageKey;
+    home?: string;
     requirement: MessageKey;
     steps: MessageKey[];
     docs?: string;
@@ -94,6 +90,7 @@ type Settings = {
   writes: boolean;
   platforms: Record<ConnectPlatform, boolean>;
   applications: Application[];
+  expiredPlatforms?: ConnectPlatform[];
 };
 type RevokeTarget = { application: Application | null };
 
@@ -126,12 +123,26 @@ function Badge({
   );
 }
 
-function ConnectionAddress({ resource }: { resource: string }) {
+function CopyField({
+  value,
+  label,
+  copyLabel,
+  copiedLabel,
+  failedLabel,
+  assistantUrl,
+}: {
+  value: string;
+  label: MessageKey;
+  copyLabel: MessageKey;
+  copiedLabel: MessageKey;
+  failedLabel: MessageKey;
+  assistantUrl?: string;
+}) {
   const input = useRef<HTMLInputElement>(null);
   const [result, setResult] = useState<"copied" | "failed">();
-  async function copyAddress() {
+  async function copy() {
     try {
-      await navigator.clipboard.writeText(resource);
+      await navigator.clipboard.writeText(value);
       setResult("copied");
     } catch {
       input.current?.focus();
@@ -142,26 +153,74 @@ function ConnectionAddress({ resource }: { resource: string }) {
   return (
     <div className="connect-address">
       <label>
-        <span>{translate("connectUrl")}</span>
+        <span>{translate(label)}</span>
         <input
           ref={input}
           readOnly
-          value={resource}
+          value={value}
           onFocus={(event) => event.currentTarget.select()}
         />
       </label>
-      <Button type="button" onClick={() => void copyAddress()}>
+      <Button type="button" onClick={() => void copy()}>
         <Copy size={16} aria-hidden="true" />
-        {translate("connectCopy")}
+        {translate(copyLabel)}
       </Button>
+      {assistantUrl && (
+        <a
+          className="button primary connect-open-assistant"
+          href={assistantUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={() => void copy()}
+        >
+          {translate("connectCopyAndOpen")}
+          <ExternalLink size={16} aria-hidden="true" />
+        </a>
+      )}
       {result && (
         <p role="status">
-          {translate(
-            result === "copied" ? "connectCopied" : "connectCopyError",
-          )}
+          {translate(result === "copied" ? copiedLabel : failedLabel)}
         </p>
       )}
     </div>
+  );
+}
+
+function ConnectionAddress({
+  resource,
+  assistantUrl,
+}: {
+  resource: string;
+  assistantUrl?: string;
+}) {
+  return (
+    <CopyField
+      value={resource}
+      label="connectUrl"
+      copyLabel="connectCopy"
+      copiedLabel="connectCopied"
+      failedLabel="connectCopyError"
+      assistantUrl={assistantUrl}
+    />
+  );
+}
+
+function ExamplePrompt({ applications }: { applications: Application[] }) {
+  const prompt = applications.some(({ scopes }) =>
+    scopes.includes("reviews:read"),
+  )
+    ? "connectExampleReviews"
+    : applications.some(({ scopes }) => scopes.includes("topics:read"))
+      ? "connectExampleTopics"
+      : "connectExamplePermissions";
+  return (
+    <CopyField
+      value={translate(prompt)}
+      label="connectExample"
+      copyLabel="connectCopyPrompt"
+      copiedLabel="connectPromptCopied"
+      failedLabel="connectPromptCopyError"
+    />
   );
 }
 
@@ -169,41 +228,56 @@ function SetupDialog({
   platform,
   resource,
   onClose,
+  applications,
 }: {
   platform: ConnectPlatform;
   resource: string | null;
   onClose: () => void;
+  applications: Application[];
 }) {
+  const connected = applications.length > 0;
   const item = assistants[platform];
   const name = platformName(platform);
   return (
     <Dialog
       title={translate(
-        resource ? "connectSetupTitle" : "connectRequirementsTitle",
+        connected
+          ? "connectConnectedTitle"
+          : resource
+            ? "connectSetupTitle"
+            : "connectRequirementsTitle",
         { platform: name },
       )}
       description={translate(
-        resource ? "connectSetupDescription" : "connectUnavailableDetail",
+        connected
+          ? "connectConnectedDescription"
+          : resource
+            ? "connectSetupDescription"
+            : "connectUnavailableDetail",
         { platform: name },
       )}
       onClose={onClose}
     >
       <div className="connect-dialog-body">
-        <p>{translate(item.requirement)}</p>
-        {resource && (
+        {connected ? (
+          <ExamplePrompt applications={applications} />
+        ) : (
+          <p>{translate(item.requirement)}</p>
+        )}
+        {!connected && resource && (
           <>
             <ol className="connect-steps">
               {item.steps.map((step) => (
                 <li key={step}>{translate(step)}</li>
               ))}
             </ol>
-            <ConnectionAddress resource={resource} />
+            <ConnectionAddress resource={resource} assistantUrl={item.home} />
             {platform === "gemini" && (
               <p>{translate("connectGeminiTroubleshooting")}</p>
             )}
           </>
         )}
-        {item.docs && (
+        {!connected && item.docs && (
           <a
             className="button connect-docs"
             href={item.docs}
@@ -219,7 +293,7 @@ function SetupDialog({
   );
 }
 
-function ApplicationCard({
+function ConnectionDetails({
   application,
   data,
   locale,
@@ -234,7 +308,7 @@ function ApplicationCard({
   onRevoke: () => void;
   onApprovalChange: (mode: ConnectApprovalMode) => void;
 }) {
-  const { clientId, name, host, scopes, connectedAt } = application;
+  const { name, host, scopes, connectedAt } = application;
   const time = new Date(connectedAt);
   const date = Number.isFinite(time.getTime())
     ? new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(time)
@@ -246,14 +320,14 @@ function ApplicationCard({
     data.writes &&
     scopes.some((scope) => scope.endsWith(":write"));
   return (
-    <article
-      id={"connect-app-" + clientId}
-      tabIndex={-1}
-      className="connect-application"
-    >
-      <div className="connect-app-summary">
+    <details className="connect-application">
+      <summary className="connect-app-summary">
+        <span>{name}</span>
+        <Badge label={access} active={access !== "connectPaused"} />
+        <ChevronDown size={16} aria-hidden="true" />
+      </summary>
+      <div className="connect-grant-body">
         <div className="connect-app-identity">
-          <h4>{name}</h4>
           <p>{host}</p>
           {date && (
             <p>
@@ -263,42 +337,43 @@ function ApplicationCard({
             </p>
           )}
         </div>
-        <Badge label={access} active={access !== "connectPaused"} />
+        <div className="connect-granted">
+          <strong>{translate("connectPermissions")}</strong>
+          <ul>
+            {scopes.map((scope) => (
+              <li key={scope}>{translate(scopeLabels[scope])}</li>
+            ))}
+          </ul>
+        </div>
+        <div className="connect-approval">
+          <label>
+            <strong>{translate("connectApprovalLabel")}</strong>
+            <select
+              value={approvalMode}
+              disabled={
+                busy ||
+                !application.grantId ||
+                (!canAllow && approvalMode === "ask")
+              }
+              onChange={(event) =>
+                onApprovalChange(
+                  event.target.value === "allow" ? "allow" : "ask",
+                )
+              }
+            >
+              <option value="ask">{translate("connectApprovalAsk")}</option>
+              <option value="allow" disabled={!canAllow}>
+                {translate("connectApprovalAllow")}
+              </option>
+            </select>
+          </label>
+          {!canAllow && <p>{translate("connectApprovalUnavailable")}</p>}
+        </div>
+        <Button type="button" disabled={busy} onClick={onRevoke}>
+          {translate("connectRevoke")}
+        </Button>
       </div>
-      <div className="connect-granted">
-        <strong>{translate("connectPermissions")}</strong>
-        <ul>
-          {scopes.map((scope) => (
-            <li key={scope}>{translate(scopeLabels[scope])}</li>
-          ))}
-        </ul>
-      </div>
-      <div className="connect-approval">
-        <label>
-          <strong>{translate("connectApprovalLabel")}</strong>
-          <select
-            value={approvalMode}
-            disabled={
-              busy ||
-              !application.grantId ||
-              (!canAllow && approvalMode === "ask")
-            }
-            onChange={(event) =>
-              onApprovalChange(event.target.value === "allow" ? "allow" : "ask")
-            }
-          >
-            <option value="ask">{translate("connectApprovalAsk")}</option>
-            <option value="allow" disabled={!canAllow}>
-              {translate("connectApprovalAllow")}
-            </option>
-          </select>
-        </label>
-        {!canAllow && <p>{translate("connectApprovalUnavailable")}</p>}
-      </div>
-      <Button type="button" disabled={busy} onClick={onRevoke}>
-        {translate("connectRevoke")}
-      </Button>
-    </article>
+    </details>
   );
 }
 
@@ -325,7 +400,21 @@ export function ConnectSettings({
         user: identity,
       }),
     staleTime: 0,
+    refetchOnWindowFocus: true,
   });
+  const refetch = settings.refetch;
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === "visible")
+        void refetch({ cancelRefetch: false });
+    };
+    window.addEventListener("focus", refresh);
+    window.addEventListener("pageshow", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("pageshow", refresh);
+    };
+  }, [refetch]);
   const revoke = useMutation({
     mutationFn: (application: Application | null) =>
       api(
@@ -427,11 +516,16 @@ export function ConnectSettings({
           </h2>
           {canSetUp && <p>{translate("connectIntro")}</p>}
         </div>
-        {!!applications.length && canSetUp && (
-          <a className="button connect-jump" href="#connect-authorized">
-            {translate("connectMoreAccess")}{" "}
-            <ArrowDown size={15} aria-hidden="true" />
-          </a>
+        {applications.length > 1 && (
+          <Button
+            type="button"
+            onClick={() => {
+              revoke.reset();
+              setRevokeTarget({ application: null });
+            }}
+          >
+            {translate("connectRevokeAll")}
+          </Button>
         )}
       </header>
       {settings.isPending && <ConnectLoading grid />}
@@ -459,161 +553,135 @@ export function ConnectSettings({
           {translate("connectDisconnected")}
         </ConnectNotice>
       )}
-      {canSetUp && data && (
-        <>
-          {!data.writes && (
-            <ConnectNotice>{translate("connectReadOnlyDetail")}</ConnectNotice>
-          )}
-          <ul className="connect-grid">
-            {connectPlatforms.map((key) => {
-              const { icon: Icon, hint } = assistants[key];
-              const name = platformName(key);
-              const platformApps = applications.filter(
-                (app) => connectPlatformForHost(app.host) === key,
-              );
-              const [connected] = platformApps;
-              const configured = data.platforms?.[key];
-              return (
-                <li key={key} className="connect-platform">
-                  <div className="connect-platform-top">
-                    <span className="connect-platform-icon">
-                      <Icon size={20} aria-hidden="true" />
-                    </span>
-                    <Badge
-                      label={
-                        connected
-                          ? "connectConnected"
-                          : configured
-                            ? "connectNotConnected"
-                            : "connectPlatformUnavailable"
-                      }
-                      active={!!connected}
-                    />
-                  </div>
+      {canSetUp && !data.writes && (
+        <ConnectNotice>{translate("connectReadOnlyDetail")}</ConnectNotice>
+      )}
+      {approval.isSuccess && (
+        <ConnectNotice tone="success">
+          {translate("connectApprovalSaved")}
+        </ConnectNotice>
+      )}
+      {approval.isError && !approvalTarget && (
+        <ConnectNotice tone="error">
+          {translate("connectApprovalError")}
+        </ConnectNotice>
+      )}
+      {data && (canSetUp || applications.length > 0) && (
+        <ul className="connect-grid" aria-label={translate("connectManaged")}>
+          {connectPlatforms.map((key) => {
+            const { icon: Icon } = assistants[key];
+            const name = platformName(key);
+            const platformApps = applications.filter(
+              (app) => connectPlatformForHost(app.host) === key,
+            );
+            const count = platformApps.length;
+            if (!canSetUp && !count) return null;
+            const configured = data.platforms?.[key];
+            const expired = data.expiredPlatforms?.includes(key);
+            const listing = connectListings[key];
+            const setupLabel = !configured
+              ? "connectRequirements"
+              : expired
+                ? "connectReconnect"
+                : "connectSetup";
+            return (
+              <li key={key} className="connect-platform">
+                <div className="connect-platform-top">
+                  <span className="connect-platform-icon">
+                    <Icon size={20} aria-hidden="true" />
+                  </span>
                   <div>
                     <h3>{name}</h3>
-                    <p>{translate(hint)}</p>
-                    {platformApps.length === 1 && (
-                      <p className="connect-access-summary">
-                        {translate(accessLabel(connected, data))}
-                      </p>
-                    )}
+                    <p>{translate("connectActiveCount", { count })}</p>
                   </div>
-                  {connected ? (
-                    <div className="connect-platform-actions">
-                      <a
-                        className="button"
-                        href={
-                          platformApps.length === 1
-                            ? "#connect-app-" + connected.clientId
-                            : "#connect-authorized"
-                        }
-                        aria-label={translate("connectManagePlatform", {
-                          platform: name,
-                        })}
-                      >
-                        {translate("connectManage")}{" "}
-                        <ArrowRight size={15} aria-hidden="true" />
-                      </a>
-                      {configured && (
-                        <Button
-                          type="button"
-                          className="text-button"
-                          aria-label={translate("connectSetupGuideFor", {
-                            platform: name,
-                          })}
-                          onClick={() => setPlatform(key)}
-                        >
-                          {translate("connectSetupGuide")}
-                        </Button>
-                      )}
-                    </div>
-                  ) : (
-                    <Button
-                      className={configured ? "primary" : ""}
-                      type="button"
-                      onClick={() => setPlatform(key)}
-                      aria-label={translate(
-                        configured
-                          ? "connectSetupTitle"
-                          : "connectRequirementsTitle",
-                        { platform: name },
-                      )}
-                    >
-                      {translate(
-                        configured ? "connectSetup" : "connectRequirements",
-                      )}
-                      <ArrowRight size={15} aria-hidden="true" />
-                    </Button>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-          <p className="connect-manual-note">
-            {translate("connectManualNote")}
-          </p>
-        </>
-      )}
-      {data && (data.enabled || applications.length > 0) && (
-        <div className="connect-applications">
-          <div className="connect-applications-header">
-            <h3 id="connect-authorized" tabIndex={-1}>
-              <ShieldCheck size={20} aria-hidden="true" />{" "}
-              {translate("connectManaged")}
-            </h3>
-            {applications.length > 1 && (
-              <Button
-                type="button"
-                onClick={() => {
-                  revoke.reset();
-                  setRevokeTarget({ application: null });
-                }}
-              >
-                {translate("connectRevokeAll")}
-              </Button>
-            )}
-          </div>
-          {approval.isSuccess && (
-            <ConnectNotice tone="success">
-              {translate("connectApprovalSaved")}
-            </ConnectNotice>
-          )}
-          {approval.isError && !approvalTarget && (
-            <ConnectNotice tone="error">
-              {translate("connectApprovalError")}
-            </ConnectNotice>
-          )}
-          {applications.length ? (
-            <div className="connect-grants">
-              {applications.map((application) => (
-                <ApplicationCard
-                  key={application.clientId}
-                  application={application}
-                  data={data}
-                  locale={locale}
-                  busy={revoke.isPending || approval.isPending}
-                  onApprovalChange={(approvalMode) => {
-                    approval.reset();
-                    if (approvalMode === "allow")
-                      setApprovalTarget(application);
-                    else approval.mutate({ application, approvalMode });
-                  }}
-                  onRevoke={() => {
-                    revoke.reset();
-                    setRevokeTarget({ application });
-                  }}
-                />
-              ))}
-            </div>
-          ) : (
-            <p className="connect-empty">{translate("connectNoApps")}</p>
-          )}
-        </div>
+                  <Badge
+                    label={
+                      count
+                        ? data.enabled
+                          ? "connectConnected"
+                          : "connectPaused"
+                        : expired
+                          ? "connectConnectionExpired"
+                          : "connectNotConnected"
+                    }
+                    active={!!count && data.enabled}
+                  />
+                </div>
+                {count > 0 ? (
+                  <>
+                    {canSetUp && <ExamplePrompt applications={platformApps} />}
+                    <details className="connect-provider-details">
+                      <summary>
+                        {translate("connectDetails")}
+                        <ChevronDown size={16} aria-hidden="true" />
+                      </summary>
+                      {platformApps.map((application) => (
+                        <ConnectionDetails
+                          key={application.grantId ?? application.clientId}
+                          application={application}
+                          data={data}
+                          locale={locale}
+                          busy={revoke.isPending || approval.isPending}
+                          onApprovalChange={(approvalMode) => {
+                            approval.reset();
+                            if (approvalMode === "allow")
+                              setApprovalTarget(application);
+                            else approval.mutate({ application, approvalMode });
+                          }}
+                          onRevoke={() => {
+                            revoke.reset();
+                            setRevokeTarget({ application });
+                          }}
+                        />
+                      ))}
+                    </details>
+                  </>
+                ) : listing ? (
+                  <a
+                    className="button primary"
+                    href={listing}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={translate("connectListingFor", {
+                      platform: name,
+                    })}
+                  >
+                    {translate("connectListing")}
+                    <ArrowUpRight size={15} aria-hidden="true" />
+                  </a>
+                ) : (
+                  <Button
+                    className={configured ? "primary" : ""}
+                    type="button"
+                    onClick={() => setPlatform(key)}
+                    aria-label={translate(
+                      !configured
+                        ? "connectRequirementsTitle"
+                        : expired
+                          ? "connectReconnectTitle"
+                          : "connectSetupTitle",
+                      { platform: name },
+                    )}
+                  >
+                    {translate(setupLabel)}
+                    <ArrowRight size={15} aria-hidden="true" />
+                  </Button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
       )}
       {canSetUp &&
         data?.resource &&
-        Object.values(data.platforms ?? {}).some(Boolean) && (
+        connectPlatforms.some(
+          (key) =>
+            data.platforms?.[key] &&
+            !connectListings[key] &&
+            !applications.some(
+              (app) => connectPlatformForHost(app.host) === key,
+            ),
+        ) && (
           <details className="connect-advanced">
             <summary>
               {translate("connectAdvanced")}{" "}
@@ -629,6 +697,13 @@ export function ConnectSettings({
           platform={platform}
           resource={
             canSetUp && data.platforms?.[platform] ? data.resource : null
+          }
+          applications={
+            canSetUp
+              ? applications.filter(
+                  (app) => connectPlatformForHost(app.host) === platform,
+                )
+              : []
           }
           onClose={() => setPlatform(undefined)}
         />
