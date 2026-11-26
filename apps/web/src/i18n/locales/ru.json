@@ -421,5 +421,13 @@
   "connectSignIn": "Войти через Google",
   "connectGoogleBusy": "Это время занято в Календаре Google.",
   "connectOutsideWindow": "Это время находится за пределами предпочтительного окна повторений.",
-  "connectConnectionExpired": "Срок подключения истёк"
+  "connectConnectionExpired": "Срок подключения истёк",
+  "connectReplacement": "Предыдущее подключение",
+  "connectChooseReplacement": "Выберите подключение для замены",
+  "connectKeepConnections": "Сохранить существующие подключения",
+  "connectReplacementOption": "{name} ({host}, {date})",
+  "connectReplacementNote": "Будет отозвано только выбранное подключение и только после завершения авторизации нового. Новое подключение получит выбранные выше разрешения и будет запрашивать подтверждение действий.",
+  "connectReplace": "Заменить подключение",
+  "connectReplaceTitle": "Заменить подключение {platform}",
+  "connectReplaceSetup": "Начните авторизацию в помощнике, затем выберите предыдущее подключение на экране разрешений Blind Spot."
 }

@@ -261,6 +261,50 @@ test("approves read and write consents and a topic, then revokes the app in Russ
       .getByText("Расширенные настройки подключения", { exact: true })
       .click();
     await capture(page, info, "settings-dark-ru", settings);
+
+    const replacementVerifier = randomBytes(32).toString("base64url");
+    query.set("state", randomBytes(32).toString("base64url"));
+    query.set(
+      "code_challenge",
+      createHash("sha256").update(replacementVerifier).digest("base64url"),
+    );
+    await page.goto(origin + "/authorize?" + query);
+    const previous = page.getByRole("combobox", {
+      name: "Предыдущее подключение",
+    });
+    const allow = page.getByRole("button", {
+      name: "Разрешить выбранный доступ",
+    });
+    await expect(previous).toHaveValue("");
+    await expect(allow).toBeDisabled();
+    await previous.selectOption({ index: 1 });
+    await expect(allow).toBeEnabled();
+    await capture(page, info, "replacement-dark-ru");
+    await allow.click();
+    await expect(page.getByText("OAuth returned to client")).toBeVisible();
+    expect((await client.callTool({ name: "list_topics" })).isError).not.toBe(
+      true,
+    );
+    const replacement = await fetch(origin + "/token", {
+      method: "POST",
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        client_id: "connect-test",
+        redirect_uri: redirect,
+        resource,
+        code: new URL(page.url()).searchParams.get("code")!,
+        code_verifier: replacementVerifier,
+      }),
+    });
+    expect(replacement.status).toBe(200);
+    const replacementTokens = await replacement.json();
+    expect(replacementTokens.scope).toBe("topics:read");
+    await page.goto(origin + "/?section=Settings");
+    await settings
+      .getByText("Сведения о подключениях", { exact: true })
+      .click();
+    await settings.getByText("Connect Tests", { exact: true }).click();
+
     const revoke = settings.getByRole("button", {
       name: "Отозвать доступ",
       exact: true,
@@ -279,6 +323,15 @@ test("approves read and write consents and a topic, then revokes the app in Russ
       .getByRole("button", { name: "Отозвать доступ", exact: true })
       .click();
     await expect(settings.getByText("Доступ отозван.")).toBeVisible();
+    expect(
+      (
+        await fetch(resource, {
+          headers: {
+            authorization: "Bearer " + replacementTokens.access_token,
+          },
+        })
+      ).status,
+    ).toBe(401);
     expect(
       (
         await fetch(resource, {
@@ -568,6 +621,18 @@ test("shows provider states and manual setup with a loading skeleton, retry and 
   await expect(reviews.getByRole("button")).toHaveCount(1);
   await expect(topics.getByRole("button")).toHaveCount(1);
   await capture(page, info, "settings-grouped-dark-ru", groupedGemini);
+  await groupedGemini
+    .getByRole("button", { name: "Заменить подключение Gemini" })
+    .click();
+  const replaceDialog = page.getByRole("dialog", {
+    name: "Заменить подключение Gemini",
+  });
+  await expect(
+    replaceDialog.getByRole("textbox", { name: "Адрес MCP-сервера" }),
+  ).toHaveValue(resource);
+  await expect(
+    replaceDialog.getByText(/выберите предыдущее подключение/),
+  ).toBeVisible();
 });
 
 test("hides disabled setup and still revokes existing grants", async ({
@@ -599,7 +664,7 @@ test("hides disabled setup and still revokes existing grants", async ({
   await grants.set({
     grants: {
       [digest(clientId)]: {
-        id: crypto.randomUUID(),
+        id: randomBytes(32).toString("base64url"),
         clientId,
         name: "Previously authorized app",
         host: "example.invalid",

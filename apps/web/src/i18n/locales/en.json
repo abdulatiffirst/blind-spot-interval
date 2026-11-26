@@ -421,5 +421,13 @@
   "connectSignIn": "Continue with Google",
   "connectGoogleBusy": "Manual time overlaps Google Calendar availability.",
   "connectOutsideWindow": "Manual time is outside your preferred scheduling window.",
-  "connectConnectionExpired": "Connection expired"
+  "connectConnectionExpired": "Connection expired",
+  "connectReplacement": "Previous connection",
+  "connectChooseReplacement": "Choose a connection to replace",
+  "connectKeepConnections": "Keep existing connections",
+  "connectReplacementOption": "{name} ({host}, {date})",
+  "connectReplacementNote": "Only the selected connection is revoked, and only after the new connection finishes authorization. The new connection starts with the permissions selected above and always asks for action approval.",
+  "connectReplace": "Replace a connection",
+  "connectReplaceTitle": "Replace a connection for {platform}",
+  "connectReplaceSetup": "Start authorization in your assistant, then choose the previous connection on the Blind Spot consent screen."
 }
