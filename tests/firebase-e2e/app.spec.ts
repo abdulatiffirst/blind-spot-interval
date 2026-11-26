@@ -399,7 +399,7 @@ test("month navigation works from January 1 and failed previews resolve visibly"
   await page.getByRole("button", { name: "month", exact: true }).click();
   await page
     .locator(".calendar-toolbar")
-    .getByRole("link", { name: "Today", exact: true })
+    .getByRole("button", { name: "Today", exact: true })
     .click();
   await page.getByRole("button", { name: "Next period" }).click();
   await expect(page.locator(".calendar-toolbar strong")).toHaveText(
