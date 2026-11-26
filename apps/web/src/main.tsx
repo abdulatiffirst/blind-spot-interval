@@ -30,6 +30,7 @@ import {
   ArrowUpRight,
   CalendarDays,
   Layers3,
+  MessageSquare,
   LogOut,
   Moon,
   RefreshCw,
@@ -58,6 +59,8 @@ import type { Review, Topic } from "./types";
 import { Button, Dialog, ErrorContext } from "./ui.tsx";
 import { TodayView } from "./views/Today";
 
+import { useTheme } from "./useTheme";
+import { FeedbackLink } from "./FeedbackLink";
 import { LegalLinks, LegalPage, legalPath } from "./legal";
 import { DeleteAccount } from "./DeleteAccount";
 import { Landing, ratingLabels } from "./views/Landing";
@@ -196,11 +199,36 @@ function App() {
   const [section, setSection] = useState(
     new URLSearchParams(location.search).get("section") ?? "Today",
   );
+  useEffect(() => {
+    const restore = () =>
+      setSection(
+        new URLSearchParams(location.search).get("section") ?? "Today",
+      );
+    window.addEventListener("popstate", restore);
+    return () => window.removeEventListener("popstate", restore);
+  }, []);
+  function navigateSection(
+    event: React.MouseEvent<HTMLAnchorElement>,
+    next: string,
+  ) {
+    if (
+      event.metaKey ||
+      event.ctrlKey ||
+      event.altKey ||
+      event.shiftKey ||
+      event.button !== 0
+    )
+      return;
+    event.preventDefault();
+    if (section !== next)
+      window.history.pushState(null, "", event.currentTarget.href);
+    setSection(next);
+  }
   const [query, setQuery] = useState(""),
     [tag, setTag] = useState(""),
     [sort, setSort] = useState("date"),
-    [archived, setArchived] = useState(false),
-    [dark, setDark] = useState(localStorage.getItem("theme") === "dark");
+    [archived, setArchived] = useState(false);
+  const { dark, toggleTheme } = useTheme();
   const [previewRevision, setPreviewRevision] = useState(0);
   const [createdTopic, setCreatedTopic] = useState<Topic | null>(null);
   const [initialTitle, setInitialTitle] = useState("");
@@ -213,10 +241,6 @@ function App() {
     [correct, setCorrect] = useState<HistoryEntry | null>(null);
   const [calendarMode, setCalendarMode] = useState("week"),
     [anchor, setAnchor] = useState<DateTime | null>(null);
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", dark);
-    localStorage.setItem("theme", dark ? "dark" : "light");
-  }, [dark]);
   useEffect(() => {
     const controller = new AbortController();
     lifetime.current = controller.signal;
@@ -628,7 +652,7 @@ function App() {
           dark={dark}
           savingLanguage={savingLanguage}
           onLanguageChange={chooseLanguage}
-          onToggleTheme={() => setDark((previous) => !previous)}
+          onToggleTheme={toggleTheme}
           onSignIn={signIn}
           onSignOut={signOut}
           onRetrySignIn={() => setSessionAttempt((attempt) => attempt + 1)}
@@ -651,11 +675,13 @@ function App() {
   if (!user || deletionRequested)
     return (
       <Landing
+        connectGuide={usesFirebase}
         theme={
           <Button
             className="icon-button"
-            onClick={() => setDark(!dark)}
-            aria-label={translate("theme")}
+            onClick={toggleTheme}
+            aria-label={translate("darkTheme")}
+            aria-pressed={dark}
           >
             {dark ? <Sun /> : <Moon />}
           </Button>
@@ -716,18 +742,23 @@ function App() {
               ["Calendar", CalendarDays],
               ["Settings", Settings2],
             ].map(([label, Icon]: any) => (
-              <button
+              <a
+                href={"?section=" + label}
+                aria-current={section === label ? "page" : undefined}
                 key={label}
                 className={section === label ? "nav-item selected" : "nav-item"}
-                onClick={() => setSection(label)}
+                onClick={(event) => navigateSection(event, label)}
               >
                 <Icon size={20} />
                 {translate(sectionLabels[label])}
                 {label === "Today" && today.length > 0 && (
                   <span className="nav-count">{today.length}</span>
                 )}
-              </button>
+              </a>
             ))}
+            <FeedbackLink className="nav-item">
+              <MessageSquare size={20} aria-hidden="true" />
+            </FeedbackLink>
           </nav>
           <div className="sidebar-bottom">
             <div className="account">
@@ -774,8 +805,9 @@ function App() {
               </span>
               <Button
                 className="icon-button"
-                onClick={() => setDark(!dark)}
-                aria-label={translate("theme")}
+                onClick={toggleTheme}
+                aria-label={translate("darkTheme")}
+                aria-pressed={dark}
               >
                 {dark ? <Sun size={19} /> : <Moon size={19} />}
               </Button>
@@ -800,10 +832,7 @@ function App() {
                   {translate("hoursTip")}{" "}
                   <a
                     href="?section=Settings"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      setSection("Settings");
-                    }}
+                    onClick={(event) => navigateSection(event, "Settings")}
                   >
                     {translate("settings")}
                   </a>
@@ -956,11 +985,18 @@ function App() {
                       <h2>{translate("googleCalendar")}</h2>
                       <p>
                         {calendar.connected
-                          ? translate("connectedInfo")
+                          ? translate(
+                              calendar.error
+                                ? "calendarConnected"
+                                : "connectedInfo",
+                            )
                           : translate("disconnectedInfo")}
                       </p>
                       {calendar.error && (
-                        <p role="alert">{systemMessage(calendar.error)}</p>
+                        <p className="calendar-error" role="alert">
+                          <strong>{translate("syncFailed")}</strong>{" "}
+                          {systemMessage(calendar.error)}
+                        </p>
                       )}
                       <div className="inline">
                         {calendar.connected ? (
@@ -987,11 +1023,8 @@ function App() {
                             </Button>
                           </>
                         ) : (
-                          <a
-                            className="button"
-                            href="/api/v1/calendar/connect"
-                            onClick={(e) => {
-                              e.preventDefault();
+                          <Button
+                            onClick={() => {
                               connectCalendar().catch((e) =>
                                 setError(e.message),
                               );
@@ -999,27 +1032,31 @@ function App() {
                           >
                             {translate("connectCalendar")}{" "}
                             <ArrowUpRight size={16} />
-                          </a>
+                          </Button>
                         )}
                       </div>
                     </div>
                     <div className="settings-card">
                       <h2>{translate("account")}</h2>
                       <p>
-                        {user.display_name} · {user.email}
+                        <strong>{user.display_name}</strong>
+                        <br />
+                        {user.email}
                       </p>
-                      <Button disabled={busy} onClick={signOut}>
-                        {translate("signOut")}
-                      </Button>
-                      {usesFirebase && identity && (
-                        <DeleteAccount
-                          user={identity}
-                          onRequested={() => {
-                            setDeletionRequested(true);
-                            signOut();
-                          }}
-                        />
-                      )}
+                      <div className="inline">
+                        <Button disabled={busy} onClick={signOut}>
+                          {translate("signOut")}
+                        </Button>
+                        {usesFirebase && identity && (
+                          <DeleteAccount
+                            user={identity}
+                            onRequested={() => {
+                              setDeletionRequested(true);
+                              signOut();
+                            }}
+                          />
+                        )}
+                      </div>
                       <LegalLinks />
                     </div>
                   </div>

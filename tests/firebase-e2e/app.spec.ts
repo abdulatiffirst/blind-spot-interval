@@ -131,7 +131,10 @@ test("loads the workspace with a Firebase token and restores it on reload", asyn
   );
   expect(saved?.onboarded).toBe(true);
   await expect(onboarding).not.toBeVisible();
-  await page.getByRole("button", { name: "Topics", exact: true }).click();
+  await page
+    .locator("aside nav")
+    .getByRole("link", { name: "Topics", exact: true })
+    .click();
   const topicsUpdated = page.waitForResponse((response) => {
     const url = new URL(response.url());
     return (
@@ -239,7 +242,10 @@ test("Google credential → first topic by name → first review date → review
   await expect(tip.getByRole("link", { name: "Settings" })).toBeVisible();
   await tip.getByRole("button", { name: "Dismiss" }).click();
   await expect(tip).toHaveCount(0);
-  await page.getByRole("button", { name: "Calendar", exact: true }).click();
+  await page
+    .locator("aside nav")
+    .getByRole("link", { name: "Calendar", exact: true })
+    .click();
   await expect(page.getByText("Your internal calendar is ready")).toBeVisible();
   const pending = await db
     .collection(`users/${uid}/reviewSchedules`)
@@ -259,7 +265,10 @@ test("Google credential → first topic by name → first review date → review
     .fill(new Date(nextAt.getTime() + 86400000).toISOString().slice(0, 16));
   await page.getByRole("button", { name: "Save time" }).click();
   await expect(page.getByRole("dialog")).not.toBeVisible();
-  await page.getByRole("button", { name: "Topics", exact: true }).click();
+  await page
+    .locator("aside nav")
+    .getByRole("link", { name: "Topics", exact: true })
+    .click();
   const open = page.getByRole("button", { name: /Logarithms/ });
   await open.click();
   await expect(page.locator(".history-row")).toHaveCount(1);
@@ -322,7 +331,10 @@ test("edit, archive, restore, keyboard dismissal and Firebase sign-out", async (
     .click();
   await expect(page.getByRole("status")).toContainText("First review:");
   await expect(page.getByRole("dialog")).not.toBeVisible();
-  await page.getByRole("button", { name: "Topics", exact: true }).click();
+  await page
+    .locator("aside nav")
+    .getByRole("link", { name: "Topics", exact: true })
+    .click();
   await page.getByRole("button", { name: /Python functions/ }).click();
   await page.getByRole("button", { name: "Edit topic" }).click();
   await page
@@ -342,14 +354,20 @@ test("edit, archive, restore, keyboard dismissal and Firebase sign-out", async (
   await page.getByRole("button", { name: "Add topic", exact: true }).click();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).not.toBeVisible();
-  await page.getByRole("button", { name: "Today", exact: true }).click();
+  await page
+    .locator("aside nav")
+    .getByRole("link", { name: "Today", exact: true })
+    .click();
   await expect(
     page
       .locator(".stats > div")
       .filter({ hasText: "Active topics" })
       .locator("strong"),
   ).toHaveText("01");
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .locator("aside nav")
+    .getByRole("link", { name: "Settings", exact: true })
+    .click();
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   const login = page
     .getByRole("button", { name: "Continue with Google" })
@@ -359,7 +377,10 @@ test("edit, archive, restore, keyboard dismissal and Firebase sign-out", async (
   await expect(login).toBeVisible();
   await expect(page.locator("aside").getByRole("navigation")).toHaveCount(0);
   await signIn(page, account);
-  await page.getByRole("button", { name: "Topics", exact: true }).click();
+  await page
+    .locator("aside nav")
+    .getByRole("link", { name: "Topics", exact: true })
+    .click();
   await expect(
     page.getByRole("button", { name: /Python closures/ }),
   ).toBeVisible();
@@ -370,7 +391,10 @@ test("month navigation works from January 1 and failed previews resolve visibly"
 }) => {
   await signIn(page);
   await expect(page.getByRole("dialog")).not.toBeVisible();
-  await page.getByRole("button", { name: "Calendar", exact: true }).click();
+  await page
+    .locator("aside nav")
+    .getByRole("link", { name: "Calendar", exact: true })
+    .click();
   await page.clock.setFixedTime(new Date("2027-01-01T12:00:00Z"));
   await page.getByRole("button", { name: "month", exact: true }).click();
   await page
@@ -396,7 +420,10 @@ test("numeric fields support direct editing, validation and fractional retention
   page,
 }) => {
   await signIn(page);
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .locator("aside nav")
+    .getByRole("link", { name: "Settings", exact: true })
+    .click();
   const setup = page.locator("form.settings-card");
   const minutes = setup.getByRole("textbox", { name: /Default duration/ });
   await expect(minutes).toBeVisible({ timeout: 40000 });
@@ -421,7 +448,10 @@ test("numeric fields support direct editing, validation and fractional retention
   await minutes.fill("180");
   await submit.click();
   await expect(page.getByRole("status")).toContainText("Preferences saved");
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .locator("aside nav")
+    .getByRole("link", { name: "Settings", exact: true })
+    .click();
   await expect(page.getByLabel(/Default duration/)).toHaveValue("180");
   await page.getByText("Advanced memory preferences", { exact: true }).click();
   const retention = page.getByLabel(/Importance 1 retention/);
@@ -442,7 +472,10 @@ test("optional topic details and manual date on a short viewport", async ({
   page,
 }) => {
   await signIn(page);
-  await page.getByRole("button", { name: "Topics", exact: true }).click();
+  await page
+    .locator("aside nav")
+    .getByRole("link", { name: "Topics", exact: true })
+    .click();
   await page.getByRole("button", { name: "Add topic", exact: true }).click();
   const dialog = page.getByRole("dialog");
   const name = dialog.getByRole("textbox", { name: /Topic name/ });
@@ -503,7 +536,10 @@ test("Russian account preference, pending archived filter, empty state and cance
   expect((await saved).ok()).toBe(true);
   await page.evaluate(() => localStorage.removeItem("bsi.language"));
   await page.reload();
-  await page.getByRole("button", { name: "Темы", exact: true }).click();
+  await page
+    .locator("aside nav")
+    .getByRole("link", { name: "Темы", exact: true })
+    .click();
   await expect(
     page.getByRole("heading", { name: "Пока нет тем" }),
   ).toBeVisible();
@@ -541,7 +577,10 @@ test("account settings links to public policies and requires deletion confirmati
   page,
 }) => {
   await signIn(page);
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .locator("aside nav")
+    .getByRole("link", { name: "Settings", exact: true })
+    .click();
   await expect(
     page.getByRole("link", { name: "Privacy Policy" }),
   ).toHaveAttribute("href", "/privacy");
@@ -562,4 +601,51 @@ test("account settings links to public policies and requires deletion confirmati
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   expect(deleteRequests).toBe(0);
+});
+
+test("keeps feedback and Settings actions usable with a Calendar sync error", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/dashboard", async (route) => {
+    const response = await route.fetch();
+    const data = await response.json();
+    await route.fulfill({
+      response,
+      json: {
+        ...data,
+        calendar: {
+          connected: true,
+          error: "Google Calendar synchronization returned 400",
+        },
+      },
+    });
+  });
+  await signIn(page);
+  const nav = page.locator("aside nav");
+  await nav.getByRole("link", { name: "Settings" }).click();
+  await expect(nav.getByRole("link", { name: "Feedback" })).toHaveAttribute(
+    "href",
+    /1FAIpQLSfufB9hksgREvOqXahEO6Ufs5OTzNDDgwQYpagCkeOqAzwM_Q/,
+  );
+  await expect(page.getByRole("alert")).toContainText("400");
+  for (const name of ["Resync", "Disconnect", "Sign out", "Delete account"]) {
+    await expect(
+      page
+        .locator(".settings-secondary")
+        .getByRole("button", { name, exact: true }),
+    ).toBeVisible();
+  }
+  await page.getByRole("button", { name: "Русский" }).click();
+  const feedback = nav.getByRole("link", { name: "Обратная связь" });
+  await expect(feedback).toHaveAttribute(
+    "href",
+    /1FAIpQLScKvWlsFzutGVLaXLpzFrDYzdzsxy3Q47xGChvaFZV2Drg4Lw/,
+  );
+  for (const width of [320, 768, 1280]) {
+    await page.setViewportSize({ width, height: 800 });
+    await expect(feedback).toBeInViewport({ ratio: 1 });
+    expect(await page.locator("html").evaluate((el) => el.scrollWidth)).toBe(
+      width,
+    );
+  }
 });

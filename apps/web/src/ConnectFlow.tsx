@@ -206,7 +206,8 @@ export function ConnectFlow({
           <Button
             type="button"
             className="icon-button"
-            aria-label={translate("theme")}
+            aria-label={translate("darkTheme")}
+            aria-pressed={dark}
             onClick={onToggleTheme}
           >
             {dark ? <Sun size={19} /> : <Moon size={19} />}
