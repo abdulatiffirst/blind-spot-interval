@@ -33,5 +33,5 @@ run(process.execPath, [
   "--headless",
   "--only",
   "auth,firestore,functions,hosting",
-  "vitest run --config vitest.firebase.config.ts tests/firebase/connect.test.ts && playwright test --config playwright.firebase.config.ts tests/firebase-e2e/connect.spec.ts",
+  "vitest run --config vitest.firebase.config.ts tests/firebase/connect.test.ts tests/firebase/hosting.test.ts && playwright test --config playwright.firebase.config.ts tests/firebase-e2e/connect.spec.ts",
 ]);

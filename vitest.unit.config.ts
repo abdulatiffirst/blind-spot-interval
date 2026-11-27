@@ -3,6 +3,7 @@ export default defineConfig({
   test: {
     include: [
       "tests/i18n.test.ts",
+      "tests/material-links.test.ts",
       "tests/memory.test.ts",
       "tests/connect.test.ts",
       "tests/scheduler*.test.ts",

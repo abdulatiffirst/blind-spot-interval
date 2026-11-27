@@ -4,7 +4,7 @@ import { translate } from "../i18n";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { LanguageSwitch } from "../i18n/LanguageSwitch";
-import { Logo } from "../components";
+import { Logo, Materials } from "../components";
 
 export const ratingLabels = [
   "rating1",
@@ -92,6 +92,7 @@ export function Landing({
           <div className="product-example" aria-label={translate("demo")}>
             <h2>{translate("chainRule")}</h2>
             <p>{translate("demoFirst")}</p>
+            <Materials items={[{ text: translate("demoMaterial") }]} />
             <div className="rating-options">
               {ratingLabels.map((r, i) => (
                 <button

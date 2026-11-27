@@ -44,6 +44,7 @@
   "chainRule": "Chain rule",
   "pastPerfect": "Past perfect",
   "demoFirst": "First review: Sunday, 18:00",
+  "demoMaterial": "Differentiate the outer function, then multiply by the derivative of the inner function. [Chain rule lesson](https://openstax.org/books/calculus-volume-1/pages/3-6-the-chain-rule)",
   "howItWorks": "How it works",
   "stepAdd": "Add a topic",
   "stepAddCopy": "Type a name, like Chain rule. That is all it needs.",
@@ -211,7 +212,6 @@
   "correctRating": "Correct rating",
   "noHistory": "No reviews yet.",
   "recallPrompt": "Try to explain this from memory.",
-  "showNotes": "Show notes",
   "rateRecall": "How well did you remember this topic?",
   "ratingSaves": "Choosing a rating saves your review.",
   "noPending": "No pending review. Restore this topic to schedule one.",
@@ -443,8 +443,8 @@
   "feedbackLink": "Feedback",
   "darkTheme": "Dark mode",
   "assistantHeading": "Connect your AI assistant",
-  "assistantIntro": "Manage topics and reviews with a compatible assistant through the Model Context Protocol (MCP). Setup options vary by provider and account.",
+  "assistantIntro": "You can use Blind Spot on its own or connect a compatible AI assistant. The AI runs in your assistant, where it can read the study materials you share and help manage your reviews. Setup options vary by provider and account.",
   "assistantExample": "“Add Logarithms to my Blind Spot topics and set its importance to 5.”",
-  "assistantPermissions": "Choose what your assistant can access. Review each change, or allow changes within the permissions you grant. Scheduling warnings still need your approval.",
+  "assistantPermissions": "Choose what your assistant can access and revoke access in Settings. Review each change, or allow changes within the permissions you grant. Scheduling warnings still need your approval.",
   "assistantGuide": "Sign in to see the connection guide in Settings"
 }

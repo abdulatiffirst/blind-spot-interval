@@ -27,7 +27,7 @@ export function TodayView({
   today: Review[];
   prefs: Preferences;
   progress: number;
-  openTopic: (id: string, review?: boolean) => void;
+  openTopic: (id: string, reviewScheduleId?: string) => void;
   setEditor: (topic: "new") => void;
   setSection: (section: string) => void;
 }) {
@@ -128,7 +128,7 @@ export function TodayView({
               review={r}
               index={i}
               zone={prefs.timezone}
-              onOpen={() => openTopic(r.topic_id, true)}
+              onOpen={() => openTopic(r.topic_id, r.id)}
             />
           ))}
         </div>

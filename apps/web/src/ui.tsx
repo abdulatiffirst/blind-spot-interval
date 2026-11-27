@@ -24,12 +24,14 @@ export function Dialog({
   children,
   onClose,
   busy = false,
+  className,
 }: {
   title: string;
   description: string;
   children: ReactNode;
   onClose: () => void;
   busy?: boolean;
+  className?: string;
 }) {
   const error = useContext(ErrorContext);
   const returnFocus = useRef(document.activeElement as HTMLElement | null);
@@ -41,7 +43,7 @@ export function Dialog({
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="overlay" />
         <DialogPrimitive.Content
-          className="dialog"
+          className={cn("dialog", className)}
           onOpenAutoFocus={(e) => {
             const input =
               e.currentTarget instanceof HTMLElement

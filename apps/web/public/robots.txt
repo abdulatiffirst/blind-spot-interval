@@ -1,0 +1,12 @@
+User-agent: *
+Disallow: /*?
+Disallow: /api/
+Disallow: /authorize
+Disallow: /token
+Disallow: /revoke
+Disallow: /register
+Disallow: /connect/
+Disallow: /__/
+Disallow: /.well-known/
+
+Sitemap: https://blind-spot-interval.web.app/sitemap.xml
