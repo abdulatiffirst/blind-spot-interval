@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { info } from "firebase-functions/logger";
 import {
   connectApprovalModes,
   connectPlatformsForRedirects,
@@ -44,6 +46,7 @@ import {
   inspectAction,
   requestMutation,
   rescheduleInput,
+  writeNames,
 } from "./writes.ts";
 
 const text = z.string(),
@@ -175,7 +178,33 @@ const previewInput = z.strictObject({
   importance: z.number().int().min(1).max(5).optional(),
   duration: z.number().int().min(5).max(180).default(15),
 });
-export function toolsFor(p: Principal, settings: Config) {
+type WriteTrace = {
+  stage: "authenticate" | "rate_limit" | "dispatch" | "execute" | "serialize";
+  scopeGranted?: boolean;
+  outcome?: string;
+  errorStatus?: number;
+};
+function traceWrite(req: express.Request, res: express.Response) {
+  const tool = writeNames.find((name) => name === req.body?.params?.name);
+  if (req.method !== "POST" || req.body?.method !== "tools/call" || !tool)
+    return;
+  const fields = { requestId: randomUUID(), tool };
+  const started = performance.now();
+  const trace: WriteTrace = { stage: "authenticate" };
+  res.setHeader("X-Request-Id", fields.requestId);
+  info("MCP write received", fields);
+  res.once("close", () =>
+    info("MCP write finished", {
+      ...fields,
+      ...trace,
+      status: res.headersSent ? res.statusCode : null,
+      responseFinished: res.writableFinished,
+      durationMs: Math.round(performance.now() - started),
+    }),
+  );
+  return trace;
+}
+export function toolsFor(p: Principal, settings: Config, trace?: WriteTrace) {
   const server = new McpServer(
     { name: "blind-spot-connect", version: "1.0.0" },
     {
@@ -205,7 +234,9 @@ export function toolsFor(p: Principal, settings: Config) {
         outputSchema,
         _meta: { securitySchemes: [{ type: "oauth2", scopes: required }] },
         scopeChallenge: () => {
-          if (required.every((scope) => p.scopes.includes(scope))) return;
+          const granted = required.every((scope) => p.scopes.includes(scope));
+          if (trace && write) trace.scopeGranted = granted;
+          if (granted) return;
           audit("tool_scope_denied:" + name, p.uid, p.clientId);
           return { scopes: required };
         },
@@ -239,9 +270,12 @@ export function toolsFor(p: Principal, settings: Config) {
               },
             };
           }
-          const structuredContent = outputSchema.parse(
-            await run(inputSchema.parse(input)),
-          );
+          const args = inputSchema.parse(input);
+          if (trace) trace.stage = "execute";
+          const result = await run(args);
+          if (trace) trace.stage = "serialize";
+          const structuredContent = outputSchema.parse(result);
+          if (trace) trace.outcome = structuredContent.state as string;
           return {
             structuredContent,
             content: [
@@ -250,6 +284,10 @@ export function toolsFor(p: Principal, settings: Config) {
           };
         } catch (error) {
           const e = error as { statusCode?: number; message?: string };
+          if (trace) {
+            trace.outcome = "tool_error";
+            trace.errorStatus = e.statusCode ?? 500;
+          }
           if (!e.statusCode && !(error instanceof z.ZodError))
             audit("tool_failure:" + name, p.uid, p.clientId);
           const message =
@@ -506,7 +544,11 @@ export function mountPublic(app: express.Express, settings: Config | null) {
         const principal = authInfo?.extra?.principal as Principal | undefined;
         if (!principal)
           fail(401, "An authorized Connect principal is required");
-        return toolsFor(principal, settings);
+        return toolsFor(
+          principal,
+          settings,
+          authInfo?.extra?.writeTrace as WriteTrace | undefined,
+        );
       },
       {
         responseMode: "json",
@@ -649,6 +691,7 @@ export function mountPublic(app: express.Express, settings: Config | null) {
     bodyLimit,
     asyncRoute(async (req, res) => {
       if (req.path !== "/api/mcp") return res.sendStatus(404);
+      const trace = traceWrite(req, res);
       const header = req.headers.authorization;
       let authInfo: AuthInfo;
       try {
@@ -666,6 +709,10 @@ export function mountPublic(app: express.Express, settings: Config | null) {
         );
         return res.status(401).json({ error: "invalid_token" });
       }
+      if (trace) {
+        trace.stage = "rate_limit";
+        authInfo.extra!.writeTrace = trace;
+      }
       const { uid, clientId } = authInfo.extra!.principal as Principal;
       await limit("account:" + digest(uid), 60);
       await limit("application:" + digest(uid + ":" + clientId), 30);
@@ -673,6 +720,7 @@ export function mountPublic(app: express.Express, settings: Config | null) {
         res.setHeader("Allow", "POST");
         return res.sendStatus(405);
       }
+      if (trace) trace.stage = "dispatch";
       await handleMcp(Object.assign(req, { auth: authInfo }), res, req.body);
     }),
   );
