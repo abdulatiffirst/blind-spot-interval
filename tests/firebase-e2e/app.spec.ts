@@ -326,6 +326,7 @@ test("Google credential → first topic by name → first review date → review
 });
 test("edit, archive, restore, keyboard dismissal and Firebase sign-out", async ({
   page,
+  context,
 }) => {
   const account = crypto.randomUUID();
   await signIn(page, account);
@@ -376,7 +377,19 @@ test("edit, archive, restore, keyboard dismissal and Firebase sign-out", async (
     .locator("aside nav")
     .getByRole("link", { name: "Settings", exact: true })
     .click();
+  const secondTab = await context.newPage();
+  await secondTab.goto("/?section=Settings");
+  await expect(
+    secondTab.getByRole("button", { name: "Sign out", exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await expect(
+    secondTab.getByRole("button", { name: "Continue with Google" }).first(),
+  ).toBeVisible();
+  await expect(
+    secondTab.getByRole("button", { name: "Sign out", exact: true }),
+  ).toHaveCount(0);
+  await secondTab.close();
   const login = page
     .getByRole("button", { name: "Continue with Google" })
     .first();

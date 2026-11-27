@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFile, unlink, writeFile } from "node:fs/promises";
 import { expect, it } from "vitest";
 
 const origin = "http://localhost:5000";
@@ -48,5 +49,35 @@ it.skipIf(process.env.BLIND_SPOT_CONNECT_ENABLED !== "true")(
       );
     }
     expect((await fetch(origin + "/api/v1/me")).status).toBe(401);
+  },
+);
+
+it.skipIf(process.env.BLIND_SPOT_CONNECT_ENABLED !== "true")(
+  "serves the Google connected-apps verification bytes directly",
+  async () => {
+    const file = "apps/web/dist/google-connected-apps-verification.json";
+    const fixture = '{"verification":"emulator-only"}\n';
+    let created = false;
+    try {
+      try {
+        await writeFile(file, fixture, { flag: "wx" });
+        created = true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      }
+      const response = await fetch(
+        origin + "/.well-known/google-connected-apps",
+        {
+          redirect: "manual",
+        },
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toMatch(
+        /^application\/json\b/,
+      );
+      expect(await response.text()).toBe(await readFile(file, "utf8"));
+    } finally {
+      if (created) await unlink(file);
+    }
   },
 );

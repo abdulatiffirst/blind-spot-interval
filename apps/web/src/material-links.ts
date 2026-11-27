@@ -3,7 +3,7 @@ import { safeUrl } from "../../../packages/shared/src/client";
 type MaterialPart = string | { text: string; href: string };
 
 const links =
-  /\[(?<label>[^\[\]\r\n]+)\]\((?<labeled>https?:\/\/(?:[^\s<>"'()]|\([^\s<>"'()]*\))+)\)|(?<![\p{L}\p{N}_+./:@-])(?<bare>https?:\/\/[^\s<>"']+)/giu;
+  /\[(?<label>[^\n\r[\]]+)\]\((?<labeled>https?:\/\/(?:[^\s<>"'()]|\([^\s<>"'()]*\))+)\)|(?<![\p{L}\p{N}_+./:@-])(?<bare>https?:\/\/[^\s<>"']+)/giu;
 
 function trimProsePunctuation(url: string) {
   let end = url.length;
