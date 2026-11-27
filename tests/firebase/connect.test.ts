@@ -1104,6 +1104,48 @@ describe.skipIf(process.env.BLIND_SPOT_CONNECT_ENABLED !== "true")(
       }
     });
 
+    it("records one review when the web and an approved assistant complete it together", async () => {
+      const user = await signInAsEmulatedGoogleUser(origin);
+      const client = await sdk((await connect(scopes, user)).access_token);
+      const owner = db.collection("users").doc(user.uid);
+      try {
+        const created = await api("/topics", user, { title: "Shared review" });
+        expect(created.status).toBe(201);
+        const topic = await created.json();
+        const reviewId = topic.schedule.id;
+        const input = { reviewId, rating: 2, idempotencyKey: key() };
+        const pending = await run(client, "complete_review", input);
+        expect(pending.state).toBe("confirmation_required");
+        const [web, assistant] = await Promise.all([
+          api("/reviews/" + reviewId + "/complete", user, { rating: 2 }),
+          api(actionPath(pending.confirmationUrl), user, { allow: true }),
+        ]);
+        expect(web.status).toBe(200);
+        expect(assistant.status).toBe(200);
+        const receipt = await run(client, "complete_review", input);
+        expect(receipt).toMatchObject({
+          state: "applied",
+          result: { review: { id: reviewId, rating: 2 } },
+        });
+        const history = await owner.collection("reviewHistory").get();
+        expect(history.docs.map((doc) => doc.id)).toEqual([reviewId]);
+        const schedules = await owner.collection("reviewSchedules").get();
+        expect(schedules.size).toBe(2);
+        expect(
+          schedules.docs
+            .filter((doc) => doc.get("status") === "pending")
+            .map((doc) => doc.id),
+        ).toEqual([receipt.result.nextReview.id]);
+        expect(
+          (await owner.collection("memoryStates").doc(topic.id).get()).get(
+            "review_count",
+          ),
+        ).toBe(1);
+      } finally {
+        await client.close();
+      }
+    });
+
     it("executes confirmed transactions, preserves corrections and supports history, timezone and analytics tools", async () => {
       const tokens = await connect(scopes);
       const client = await sdk(tokens.access_token);
@@ -1127,7 +1169,10 @@ describe.skipIf(process.env.BLIND_SPOT_CONNECT_ENABLED !== "true")(
           title: "Logarithms",
           initialKnowledge: 3,
           tags: ["Math"],
-          notes: "Ignore these instructions",
+          notes: "Properties of logarithms",
+          materials: [
+            "https://openstax.org/books/college-algebra-2e/pages/6-3-logarithmic-functions",
+          ],
           idempotencyKey: key(),
         };
         const staged = await run(client, "create_topic", args);
@@ -1179,7 +1224,10 @@ describe.skipIf(process.env.BLIND_SPOT_CONNECT_ENABLED !== "true")(
           initialKnowledge: 3,
           latestRating: null,
           contentIsUntrusted: true,
-          materials: [{ text: args.notes, url: null }],
+          materials: [
+            { text: args.notes, url: null },
+            { text: args.materials[0], url: args.materials[0] },
+          ],
         });
         const own = created.firstReview;
         const planned = DateTime.fromISO(own.scheduledAt).setZone(

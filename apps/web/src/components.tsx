@@ -1,6 +1,6 @@
 import { translate } from "./i18n";
 import { ArrowUpRight, Layers3 } from "lucide-react";
-import { safeUrl } from "../../../packages/shared/src/client";
+import { materialParts } from "./material-links";
 import { date } from "./date";
 import type { Review } from "./types";
 import { Button } from "./ui";
@@ -64,23 +64,29 @@ export function ReviewRow({
     </div>
   );
 }
-export function Materials({ items }: { items: { text: string }[] }) {
+export function Materials({ items = [] }: { items?: { text: string }[] }) {
+  if (!items.length) return null;
   return (
     <ul className="materials">
       {items.map((m, i) => (
-        <li key={i}>
-          {m.text.split(/(https?:\/\/[^\s]+)/).map((part, j) =>
-            safeUrl(part) ? (
+        <li
+          key={i}
+          className={
+            /^\s*[-*•‣◦]\s/u.test(m.text) ? "material-with-bullet" : undefined
+          }
+        >
+          {materialParts(m.text).map((part, j) =>
+            typeof part === "string" ? (
+              part
+            ) : (
               <a
                 key={j}
-                href={safeUrl(part)!}
+                href={part.href}
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                {part}
+                {part.text}
               </a>
-            ) : (
-              part
             ),
           )}
         </li>

@@ -234,6 +234,14 @@ test("Google credential → first topic by name → first review date → review
   );
   await page.getByRole("button", { name: "View topic" }).click();
   await page.getByRole("button", { name: /Review now/ }).click();
+  const review = page.getByRole("dialog", { name: "Logarithms" });
+  await expect(
+    review.getByRole("heading", { name: "Study materials" }),
+  ).toHaveCount(0);
+  if (process.env.REVIEW_QA_SCREENSHOTS)
+    await page.screenshot({
+      path: test.info().outputPath("review-without-materials.png"),
+    });
   await page.getByRole("button", { name: /4 Good recall/ }).click();
   await expect(page.getByRole("status")).toContainText("Next review");
   const tip = page
@@ -318,6 +326,7 @@ test("Google credential → first topic by name → first review date → review
 });
 test("edit, archive, restore, keyboard dismissal and Firebase sign-out", async ({
   page,
+  context,
 }) => {
   const account = crypto.randomUUID();
   await signIn(page, account);
@@ -368,7 +377,19 @@ test("edit, archive, restore, keyboard dismissal and Firebase sign-out", async (
     .locator("aside nav")
     .getByRole("link", { name: "Settings", exact: true })
     .click();
+  const secondTab = await context.newPage();
+  await secondTab.goto("/?section=Settings");
+  await expect(
+    secondTab.getByRole("button", { name: "Sign out", exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await expect(
+    secondTab.getByRole("button", { name: "Continue with Google" }).first(),
+  ).toBeVisible();
+  await expect(
+    secondTab.getByRole("button", { name: "Sign out", exact: true }),
+  ).toHaveCount(0);
+  await secondTab.close();
   const login = page
     .getByRole("button", { name: "Continue with Google" })
     .first();
@@ -514,9 +535,8 @@ test("optional topic details and manual date on a short viewport", async ({
   await page.getByRole("button", { name: "View topic" }).click();
   await page.getByRole("button", { name: "Review now" }).click();
   await expect(
-    dialog.getByText("Differentiate the outer function first."),
-  ).toBeHidden();
-  await dialog.getByText("Show notes", { exact: true }).click();
+    dialog.getByRole("heading", { name: "Study materials" }),
+  ).toBeVisible();
   await expect(
     dialog.getByText("Differentiate the outer function first."),
   ).toBeVisible();
@@ -648,4 +668,168 @@ test("keeps feedback and Settings actions usable with a Calendar sync error", as
       width,
     );
   }
+});
+
+test("shows topic materials during review and keeps the same schedule after reload", async ({
+  page,
+  isMobile,
+  context,
+}) => {
+  const title = "Net Present Value (NPV)";
+  const notes = [
+    "Understand discounted cash flow.",
+    "Explain the relationship between discount rates and present value.",
+    "Practice calculating NPV.",
+  ];
+  const resource =
+    "https://openstax.org/books/principles-finance/pages/16-2-net-present-value-npv-method";
+  const resourceRequests: string[] = [];
+  context.on("request", (request) => {
+    if (request.url() === resource) resourceRequests.push(request.url());
+  });
+  const capture = (name: string) =>
+    process.env.REVIEW_QA_SCREENSHOTS
+      ? page.screenshot({ path: test.info().outputPath(name + ".png") })
+      : Promise.resolve();
+  await page.setViewportSize({
+    width: isMobile ? 390 : 1366,
+    height: isMobile ? 844 : 900,
+  });
+  await signIn(page);
+  await page.getByRole("textbox", { name: "Topic name" }).fill(title);
+  await page.getByRole("button", { name: "Add topic", exact: true }).click();
+  const editor = page.getByRole("dialog");
+  const materials = [...notes, `[OpenStax NPV lesson](${resource})`];
+  for (const [index, text] of materials.entries()) {
+    const input = editor.getByLabel(`Material ${index + 1}`, { exact: true });
+    await input.fill(text);
+    if (index < materials.length - 1) await input.press("Enter");
+  }
+  await editor.getByRole("button", { name: "Add topic", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("First review:");
+  await page.getByRole("button", { name: "View topic" }).click();
+  await page.getByRole("button", { name: "Review now" }).click();
+
+  const review = page.getByRole("dialog", { name: title });
+  const study = review.getByRole("region", { name: "Study materials" });
+  const options = review.locator(".rating-options").getByRole("button");
+  await expect(study.getByRole("listitem")).toHaveText(
+    materials.slice(0, 3).concat("OpenStax NPV lesson"),
+  );
+  await expect(options).toHaveCount(5);
+  const reviewUrl = page.url();
+  const reviewParams = new URL(reviewUrl).searchParams;
+  const topicId = reviewParams.get("review")!;
+  const scheduleId = reviewParams.get("schedule")!;
+  expect(topicId).toBeTruthy();
+  expect(scheduleId).toBeTruthy();
+  await capture("review-en");
+  expect(resourceRequests).toHaveLength(0);
+
+  await context.route(resource, (route) =>
+    route.fulfill({ body: "OpenStax NPV lesson" }),
+  );
+  const opened = context.waitForEvent("page");
+  const link = study.getByRole("link", { name: "OpenStax NPV lesson" });
+  await expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  await link.focus();
+  await expect(link).toBeFocused();
+  await page.keyboard.press("Enter");
+  const tab = await opened;
+  await tab.waitForURL(resource);
+  await tab.close();
+  await expect(review).toBeVisible();
+  expect(
+    (await db.doc(`users/${uid}/reviewSchedules/${scheduleId}`).get()).get(
+      "status",
+    ),
+  ).toBe("pending");
+  expect((await db.collection(`users/${uid}/reviewHistory`).get()).size).toBe(
+    0,
+  );
+  await page.reload();
+  await expect(study.getByText(notes[2], { exact: true })).toBeVisible();
+  await expect(page).toHaveURL(reviewUrl);
+
+  await review.getByRole("button", { name: "Close dialog" }).click();
+  await expect(page).not.toHaveURL(/review=/);
+  const languageSaved = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/preferences/language") && response.ok(),
+  );
+  await page.getByRole("button", { name: "Русский" }).click();
+  await languageSaved;
+  await page.goto(reviewUrl);
+  const russian = review.getByRole("region", { name: "Учебные материалы" });
+  await expect(russian).toBeVisible();
+  await capture("review-ru");
+
+  const updated = [
+    "• Дисконтирование ∑\n• Ставка и стоимость",
+    ...Array(8).fill("Практика расчёта NPV. ".repeat(12)),
+    "https://openstax.org/" + "very-long-reference-".repeat(50),
+  ];
+  await db.doc(`users/${uid}/topicMaterials/${topicId}`).update({
+    items: updated.map((text, position) => ({ text, position })),
+  });
+  await page.reload();
+  await expect(russian.getByRole("listitem").first()).toHaveText(updated[0]);
+  await expect(russian.getByRole("list")).toHaveCSS("white-space", "pre-wrap");
+  await expect(russian.getByRole("link")).toHaveAttribute(
+    "href",
+    updated.at(-1)!,
+  );
+  for (const width of [320, 390, 430, 768, 1366, 1920]) {
+    await page.setViewportSize({ width, height: 844 });
+    const sizing = await russian.evaluate((region) => ({
+      page: document.documentElement.scrollWidth,
+      content: region.scrollWidth,
+      viewport: region.clientWidth,
+    }));
+    expect(sizing.page).toBe(width);
+    expect(sizing.content).toBe(sizing.viewport);
+    await expect(options.last()).toBeInViewport();
+    if (
+      width === (isMobile ? 390 : 1366) &&
+      process.env.REVIEW_QA_SCREENSHOTS
+    ) {
+      await capture("review-long-materials");
+      await russian
+        .getByRole("link")
+        .evaluate((link) => link.scrollIntoView({ block: "start" }));
+      await capture("review-long-url");
+      await russian.evaluate((region) => {
+        region.scrollTop = 0;
+      });
+    }
+  }
+  await page.route(
+    "**/api/v1/reviews/" + scheduleId + "/complete",
+    (route) => route.abort("internetdisconnected"),
+    { times: 1 },
+  );
+  await options.nth(3).click();
+  await expect(review.getByRole("alert")).toBeVisible();
+  await expect(options.nth(3)).toBeEnabled();
+  expect((await db.collection(`users/${uid}/reviewHistory`).get()).size).toBe(
+    0,
+  );
+  await options.nth(3).click();
+  await expect(review).toBeHidden();
+  await expect(page.getByRole("status")).toContainText(/Следующее повторение/);
+  const pending = await db
+    .collection(`users/${uid}/reviewSchedules`)
+    .where("status", "==", "pending")
+    .get();
+  expect(pending.size).toBe(1);
+  expect(pending.docs[0].get("topic_id")).toBe(topicId);
+  expect(pending.docs[0].id).not.toBe(scheduleId);
+  expect(pending.docs[0].get("scheduled_at")).toBeTruthy();
+  const history = await db.collection(`users/${uid}/reviewHistory`).get();
+  expect(history.size).toBe(1);
+  expect(history.docs[0].id).toBe(scheduleId);
+  expect(history.docs[0].get("original_rating")).toBe(4);
+  await page.goto(reviewUrl);
+  await expect(review).toBeVisible();
+  await expect(options).toHaveCount(0);
 });

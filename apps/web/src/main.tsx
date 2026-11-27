@@ -196,6 +196,7 @@ function App() {
   const user = profile?.identity === identity ? profile?.user : null;
   const lifetime = useRef<AbortSignal>(null);
   const session = useRef<AbortSignal>(null);
+  const latestTopicRequest = useRef(0);
   const [section, setSection] = useState(
     new URLSearchParams(location.search).get("section") ?? "Today",
   );
@@ -460,24 +461,50 @@ function App() {
   });
   const history = topicHistory.data?.pages.flatMap((page) => page.items) ?? [];
   useEffect(() => {
-    const id = new URLSearchParams(location.search).get("review");
-    if (user && id) {
-      const controller = new AbortController();
-      const { signal } = controller;
-      api("/topics/" + id, "GET", undefined, { signal })
-        .then((topic) => {
-          if (!signal.aborted) setReview(topic);
-        })
-        .catch((e) => {
-          if (!signal.aborted) setError(e.message);
-        });
-      historyReplace();
-      return () => controller.abort();
-    }
+    const params = new URLSearchParams(location.search);
+    const id = params.get("review");
+    const scheduleId = params.get("schedule") || null;
+    if (!user || !id || connectFlow) return;
+    const sequence = ++latestTopicRequest.current;
+    const controller = new AbortController();
+    const { signal } = controller;
+    api("/topics/" + encodeURIComponent(id), "GET", undefined, {
+      signal,
+    })
+      .then((topic: Topic) => {
+        if (!signal.aborted && sequence === latestTopicRequest.current)
+          showReview(topic, scheduleId);
+      })
+      .catch((e) => {
+        if (!signal.aborted && sequence === latestTopicRequest.current)
+          setError(e.message);
+      });
+    return () => controller.abort();
   }, [user]);
-  function historyReplace() {
-    window.history.replaceState(null, "", location.pathname);
+
+  function showReview(topic: Topic, expectedScheduleId?: string | null) {
+    const schedule =
+      topic.status === "active" &&
+      (!expectedScheduleId || topic.schedule?.id === expectedScheduleId)
+        ? topic.schedule
+        : null;
+    const url = new URL(location.href);
+    url.searchParams.set("review", topic.id);
+    const scheduleId = expectedScheduleId ?? schedule?.id;
+    if (scheduleId) url.searchParams.set("schedule", scheduleId);
+    else url.searchParams.delete("schedule");
+    window.history.replaceState(window.history.state, "", url);
+    setReview({ ...topic, schedule });
   }
+
+  function closeReview() {
+    const url = new URL(location.href);
+    url.searchParams.delete("review");
+    url.searchParams.delete("schedule");
+    window.history.replaceState(window.history.state, "", url);
+    setReview(null);
+  }
+
   async function signIn() {
     if (signingIn) return;
     const signal = lifetime.current;
@@ -585,11 +612,10 @@ function App() {
       return { signedOut: true };
     }, "signedOut");
   }
-  const latestTopicRequest = useRef(0);
-  async function openTopic(id: string, asReview = false) {
+  async function openTopic(id: string, reviewScheduleId?: string) {
     const signal = session.current ?? undefined;
     const sequence = ++latestTopicRequest.current;
-    const path = "/topics/" + id;
+    const path = "/topics/" + encodeURIComponent(id);
     try {
       const topic: Topic = await cache.fetchQuery({
         queryKey: [...accountKey, "topic", id],
@@ -598,8 +624,10 @@ function App() {
         staleTime: 0,
       });
       if (signal?.aborted || sequence !== latestTopicRequest.current) return;
-      if (asReview) setReview(topic);
-      else setDetail(topic);
+      if (reviewScheduleId) {
+        showReview(topic, reviewScheduleId);
+        setDetail(null);
+      } else setDetail(topic);
     } catch (e: any) {
       if (!signal?.aborted && sequence === latestTopicRequest.current)
         setError(e.message);
@@ -1150,10 +1178,7 @@ function App() {
               <Button
                 className="primary"
                 disabled={!detail.schedule}
-                onClick={() => {
-                  setReview(detail);
-                  setDetail(null);
-                }}
+                onClick={() => void openTopic(detail.id, detail.schedule?.id)}
               >
                 {translate("reviewNow")} <ArrowRight size={16} />
               </Button>
@@ -1238,60 +1263,71 @@ function App() {
         {review && (
           <Dialog
             title={review.title}
+            className="review-dialog"
             description={translate("recallPrompt")}
-            onClose={() => setReview(null)}
+            onClose={closeReview}
+            busy={busy}
           >
-            {review.materials.length > 0 && (
-              <details>
-                <summary>{translate("showNotes")}</summary>
-                <Materials items={review.materials} />
-              </details>
+            {!!review.materials?.length && (
+              <section className="review-materials">
+                <h3 id="review-materials-heading">{translate("materials")}</h3>
+                <div
+                  className="review-materials-content"
+                  role="region"
+                  aria-labelledby="review-materials-heading"
+                  tabIndex={0}
+                >
+                  <Materials items={review.materials} />
+                </div>
+              </section>
             )}
-            <h3>{translate("rateRecall")}</h3>
-            <p className="muted">{translate("ratingSaves")}</p>
             {review.schedule ? (
-              <div className="rating-options">
-                {ratingLabels.map((label, i) => (
-                  <Button
-                    key={label}
-                    disabled={busy}
-                    onClick={() =>
-                      action(async () => {
-                        const signal = session.current;
-                        const r = await api(
-                          "/reviews/" + review.schedule!.id + "/complete",
-                          "POST",
-                          { rating: i + 1 },
-                        );
-                        if (signal?.aborted) return;
-                        const tipKey = "study-hours-tip:" + user.id;
-                        if (localStorage.getItem(tipKey) === "waiting") {
-                          localStorage.setItem(tipKey, "visible");
-                          setShowHoursTip(true);
-                        }
-                        setReview(null);
-                        if (r.next?.scheduled_at)
-                          setAnchor(
-                            DateTime.fromISO(r.next.scheduled_at)
-                              .setZone(prefs.timezone)
-                              .startOf("day"),
+              <>
+                <h3>{translate("rateRecall")}</h3>
+                <p className="muted">{translate("ratingSaves")}</p>
+                <div className="rating-options">
+                  {ratingLabels.map((label, i) => (
+                    <Button
+                      key={label}
+                      disabled={busy}
+                      onClick={() =>
+                        action(async () => {
+                          const signal = session.current;
+                          const r = await api(
+                            "/reviews/" + review.schedule!.id + "/complete",
+                            "POST",
+                            { rating: i + 1 },
                           );
-                        if (r.next && !r.next.scheduled_at)
-                          return r.next.adjustment_reason ?? "needsTime";
-                        return {
-                          key: "completedNext",
-                          at: r.next?.scheduled_at ?? null,
-                          zone: prefs.timezone,
-                        };
-                      }, "reviewCompleted")
-                    }
-                  >
-                    <span>{i + 1}</span>
-                    {translate(label)}
-                    <ArrowRight size={16} />
-                  </Button>
-                ))}
-              </div>
+                          if (signal?.aborted) return;
+                          const tipKey = "study-hours-tip:" + user.id;
+                          if (localStorage.getItem(tipKey) === "waiting") {
+                            localStorage.setItem(tipKey, "visible");
+                            setShowHoursTip(true);
+                          }
+                          closeReview();
+                          if (r.next?.scheduled_at)
+                            setAnchor(
+                              DateTime.fromISO(r.next.scheduled_at)
+                                .setZone(prefs.timezone)
+                                .startOf("day"),
+                            );
+                          if (r.next && !r.next.scheduled_at)
+                            return r.next.adjustment_reason ?? "needsTime";
+                          return {
+                            key: "completedNext",
+                            at: r.next?.scheduled_at ?? null,
+                            zone: prefs.timezone,
+                          };
+                        }, "reviewCompleted")
+                      }
+                    >
+                      <span>{i + 1}</span>
+                      {translate(label)}
+                      <ArrowRight size={16} />
+                    </Button>
+                  ))}
+                </div>
+              </>
             ) : (
               <p>{translate("noPending")}</p>
             )}

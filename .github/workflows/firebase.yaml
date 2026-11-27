@@ -20,6 +20,11 @@ jobs:
       - run: npm run test:e2e
         env:
           CONNECT_UX_SCREENSHOTS: "true"
+          REVIEW_QA_SCREENSHOTS: "true"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: review-screenshots
+          path: test-results/app-*/review-*.png
       - uses: actions/upload-artifact@v4
         with:
           name: connect-disabled-screenshots

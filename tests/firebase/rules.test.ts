@@ -9,6 +9,15 @@ import { doc, getDoc, setDoc, collection, getDocs } from "firebase/firestore";
 import { readFile } from "node:fs/promises";
 let env: RulesTestEnvironment;
 const uid = "rules-" + crypto.randomUUID();
+const learnerDocs = [
+  "topics/topic",
+  "topicMaterials/topic",
+  "reviewSchedules/review",
+  "reviewHistory/review",
+  "preferences/default",
+  "memoryStates/topic",
+  "calendarEvents/review",
+];
 beforeAll(async () => {
   env = await initializeTestEnvironment({
     projectId: "demo-blind-spot-interval",
@@ -21,9 +30,8 @@ beforeAll(async () => {
   await env.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
     await setDoc(doc(db, "users", uid), { id: uid });
-    await setDoc(doc(db, `users/${uid}/topics/topic`), {
-      title: "Private topic",
-    });
+    for (const path of learnerDocs)
+      await setDoc(doc(db, `users/${uid}/${path}`), { title: "Private topic" });
     await setDoc(doc(db, "calendarConnections", uid), {
       encrypted_tokens: "synthetic-envelope",
     });
@@ -32,7 +40,8 @@ beforeAll(async () => {
 afterAll(async () => {
   await env.withSecurityRulesDisabled(async (context) => {
     const { deleteDoc } = await import("firebase/firestore");
-    await deleteDoc(doc(context.firestore(), `users/${uid}/topics/topic`));
+    for (const path of learnerDocs)
+      await deleteDoc(doc(context.firestore(), `users/${uid}/${path}`));
     await deleteDoc(doc(context.firestore(), "users", uid));
     await deleteDoc(doc(context.firestore(), "calendarConnections", uid));
   });
@@ -47,22 +56,16 @@ it("allows owner reads and queries", async () => {
   await assertSucceeds(getDocs(collection(db, `users/${uid}/topics`)));
 });
 it("rejects anonymous and cross-user reads", async () => {
-  await assertFails(
-    getDoc(
-      doc(
-        env.unauthenticatedContext().firestore(),
-        `users/${uid}/topics/topic`,
-      ),
-    ),
-  );
-  await assertFails(
-    getDoc(
-      doc(
-        env.authenticatedContext("other").firestore(),
-        `users/${uid}/topics/topic`,
-      ),
-    ),
-  );
+  const anonymous = env.unauthenticatedContext().firestore();
+  const owner = env.authenticatedContext(uid).firestore();
+  const other = env.authenticatedContext("other").firestore();
+  for (const path of ["", ...learnerDocs.map((item) => "/" + item)]) {
+    const ref = `users/${uid}${path}`;
+    await assertSucceeds(getDoc(doc(owner, ref)));
+    await assertFails(getDoc(doc(anonymous, ref)));
+    await assertFails(getDoc(doc(other, ref)));
+    await assertFails(setDoc(doc(other, ref), { title: "Different learner" }));
+  }
 });
 it("denies all direct client writes, including forged memory and review documents", async () => {
   const db = env.authenticatedContext(uid).firestore();
